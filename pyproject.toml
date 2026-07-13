@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "expediente-cero-api"
+version = "0.1.0"
+description = "AI-assisted intake backend for Expediente Cero"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "fastapi>=0.116,<1",
+  "pydantic-settings>=2.10,<3",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28,<1",
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<9",
+  "pytest-cov>=6.2,<8",
+  "ruff>=0.12,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["apps/api/app"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers --cov=app --cov-report=term-missing --cov-fail-under=95"
+pythonpath = ["apps/api"]
+testpaths = ["apps/api/tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["app"]
+
+[tool.coverage.report]
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["apps/api/app"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "uvicorn"
+ignore_missing_imports = true
+
