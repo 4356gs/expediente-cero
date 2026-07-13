@@ -14,7 +14,7 @@
 
 - Extract structured facts with GPT-5.6.
 - Classify the likely procedure.
-- distinguish facts, assumptions, and unresolved questions.
+^- Distinguish facts, assumptions, and unresolved questions.
 - Flag potential contradictions.
 - Produce confidence indicators without presenting them as probabilities of
   legal correctness.
