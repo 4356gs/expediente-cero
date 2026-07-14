@@ -1,5 +1,6 @@
 """Integration tests for SQLite repository behavior and transactionality."""
 
+from dataclasses import replace
 from datetime import timedelta
 from uuid import UUID
 
@@ -54,6 +55,26 @@ def test_three_synthetic_fixtures_round_trip_through_repositories(
         assert documents.list_for_case(fixture.case.id) == fixture.documents
         assert all(message.is_synthetic for message in fixture.source_messages)
         assert all(document.is_synthetic for document in fixture.documents)
+
+
+def test_add_intake_rolls_back_every_record_on_unexpected_child_conflict(
+    session_factory: sessionmaker[Session],
+) -> None:
+    cases, _audit, messages, documents = _repositories(session_factory)
+    first = SYNTHETIC_CASE_FIXTURES[0]
+    second = SYNTHETIC_CASE_FIXTURES[1]
+    cases.add_intake(first.case, first.source_messages, first.documents)
+    conflicting_message = replace(
+        second.source_messages[0],
+        id=first.source_messages[0].id,
+    )
+
+    with pytest.raises(IntegrityError):
+        cases.add_intake(second.case, (conflicting_message,), second.documents)
+
+    assert cases.get(second.case.id) is None
+    assert messages.list_for_case(second.case.id) == ()
+    assert documents.list_for_case(second.case.id) == ()
 
 
 def test_transition_and_audit_event_are_persisted_together(
