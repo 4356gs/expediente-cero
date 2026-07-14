@@ -319,6 +319,7 @@ def make_case(**overrides: object) -> Case:
             "validation timestamp must be within",
         ),
         ({"status": CaseStatus.NEEDS_REVIEW}, "require an intake analysis"),
+        ({"status": CaseStatus.ANALYZED}, "analyzed cases require an intake analysis"),
         (
             {"status": CaseStatus.NEEDS_REVIEW, "intake_analysis_id": uuid4()},
             "require deterministic validation",

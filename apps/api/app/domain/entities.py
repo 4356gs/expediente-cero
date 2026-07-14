@@ -305,6 +305,9 @@ class Case:
         if any(finding.case_id != self.id for finding in self.validation_findings):
             raise DomainInvariantError("validation findings must belong to the case")
 
+        if self.status is CaseStatus.ANALYZED and self.intake_analysis_id is None:
+            raise DomainInvariantError("analyzed cases require an intake analysis")
+
         review_ready = {
             CaseStatus.NEEDS_REVIEW,
             CaseStatus.APPROVED,

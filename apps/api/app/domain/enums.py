@@ -23,6 +23,7 @@ class CaseStatus(StrEnum):
 
     DRAFT = "draft"
     ANALYZING = "analyzing"
+    ANALYZED = "analyzed"
     NEEDS_REVIEW = "needs_review"
     APPROVED = "approved"
     REJECTED = "rejected"

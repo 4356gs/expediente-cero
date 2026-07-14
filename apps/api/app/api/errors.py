@@ -7,6 +7,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.api.schemas import ErrorDetail, ErrorEnvelope, ValidationIssue
+from app.application.analysis import (
+    AnalysisAttemptFailedError,
+    AnalysisCaseNotFoundError,
+    AnalysisConfigurationError,
+    AnalysisStateConflictError,
+)
 from app.application.intake import IntakeCaseNotFoundError
 from app.application.ports.repositories import CaseReferenceConflictError
 from app.domain.errors import DomainError
@@ -54,9 +60,44 @@ async def persistence_conflict_handler(_request: Request, error: Exception) -> J
     )
 
 
+async def analysis_failure_handler(_request: Request, error: Exception) -> JSONResponse:
+    failure = cast(AnalysisAttemptFailedError, error)
+    status_code = {
+        "timeout": 504,
+        "rate_limit": 503,
+        "connection_error": 503,
+        "synthetic_intake_required": 422,
+    }.get(failure.code, 502)
+    return _response(
+        status_code,
+        code=failure.code,
+        message="The intake analysis attempt could not be completed.",
+    )
+
+
+async def analysis_configuration_handler(_request: Request, error: Exception) -> JSONResponse:
+    return _response(
+        503,
+        code="analysis_provider_unavailable",
+        message="The intake analysis provider is not configured.",
+    )
+
+
+async def analysis_state_conflict_handler(_request: Request, error: Exception) -> JSONResponse:
+    return _response(
+        409,
+        code="analysis_state_conflict",
+        message="The case state does not permit a new analysis attempt.",
+    )
+
+
 def register_error_handlers(application: FastAPI) -> None:
     """Install the API's consistent typed error envelope."""
     application.add_exception_handler(RequestValidationError, request_validation_error_handler)
     application.add_exception_handler(IntakeCaseNotFoundError, case_not_found_error_handler)
+    application.add_exception_handler(AnalysisCaseNotFoundError, case_not_found_error_handler)
+    application.add_exception_handler(AnalysisAttemptFailedError, analysis_failure_handler)
+    application.add_exception_handler(AnalysisConfigurationError, analysis_configuration_handler)
+    application.add_exception_handler(AnalysisStateConflictError, analysis_state_conflict_handler)
     application.add_exception_handler(DomainError, domain_error_handler)
     application.add_exception_handler(CaseReferenceConflictError, persistence_conflict_handler)

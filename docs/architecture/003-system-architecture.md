@@ -156,6 +156,7 @@ written to the audit trail.
 
 - `draft`: intake exists but has not been analyzed.
 - `analyzing`: an analysis request is in progress.
+- `analyzed`: a schema-valid analysis is persisted and awaits deterministic validation.
 - `needs_review`: analysis and validation are available.
 - `approved`: a professional accepted the prepared result.
 - `rejected`: a professional rejected the prepared result.

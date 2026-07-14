@@ -10,6 +10,8 @@ from app.domain import (
     Case,
     CaseStatus,
     DocumentMetadata,
+    IntakeAnalysis,
+    ModelRun,
     SourceMessage,
     TransitionOutcome,
 )
@@ -79,3 +81,13 @@ class DocumentMetadataRepository(Protocol):
 
     def list_for_case(self, case_id: UUID) -> tuple[DocumentMetadata, ...]:
         """Return document metadata in creation order."""
+
+
+class AnalysisRepository(Protocol):
+    """Persist final model-attempt outcomes with their case transition."""
+
+    def complete_success(self, model_run: ModelRun, analysis: IntakeAnalysis) -> Case:
+        """Atomically store success metadata, current analysis, state, and audit."""
+
+    def complete_failure(self, model_run: ModelRun) -> Case:
+        """Atomically store failure metadata, failed state, and audit."""

@@ -16,9 +16,10 @@ from app.domain.errors import DomainInvariantError, InvalidTransitionError
 ALLOWED_TRANSITIONS: frozenset[tuple[CaseStatus, CaseStatus]] = frozenset(
     {
         (CaseStatus.DRAFT, CaseStatus.ANALYZING),
-        (CaseStatus.ANALYZING, CaseStatus.NEEDS_REVIEW),
+        (CaseStatus.ANALYZING, CaseStatus.ANALYZED),
         (CaseStatus.ANALYZING, CaseStatus.ANALYSIS_FAILED),
         (CaseStatus.ANALYSIS_FAILED, CaseStatus.ANALYZING),
+        (CaseStatus.ANALYZED, CaseStatus.NEEDS_REVIEW),
         (CaseStatus.NEEDS_REVIEW, CaseStatus.ANALYZING),
         (CaseStatus.NEEDS_REVIEW, CaseStatus.APPROVED),
         (CaseStatus.NEEDS_REVIEW, CaseStatus.REJECTED),

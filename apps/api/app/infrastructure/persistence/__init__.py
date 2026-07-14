@@ -2,6 +2,7 @@
 
 from app.infrastructure.persistence.database import create_session_factory, create_sqlite_engine
 from app.infrastructure.persistence.repositories import (
+    SqliteAnalysisRepository,
     SqliteAuditEventRepository,
     SqliteCaseRepository,
     SqliteDocumentMetadataRepository,
@@ -9,6 +10,7 @@ from app.infrastructure.persistence.repositories import (
 )
 
 __all__ = [
+    "SqliteAnalysisRepository",
     "SqliteAuditEventRepository",
     "SqliteCaseRepository",
     "SqliteDocumentMetadataRepository",

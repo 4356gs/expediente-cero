@@ -6,8 +6,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.application.analysis import AnalysisAttempt
 from app.application.intake import CaseIntake, CasePage
-from app.domain import CaseStatus, OutputLanguage, ProcedureType
+from app.domain import CaseStatus, FactStatus, ModelRunStatus, OutputLanguage, ProcedureType
 
 Reference = Annotated[str, Field(min_length=1, max_length=32)]
 MessageContent = Annotated[str, Field(min_length=1, max_length=8_000)]
@@ -139,6 +140,117 @@ class CaseListResponse(StrictSchema):
             total=page.total,
             offset=page.offset,
             limit=page.limit,
+        )
+
+
+class ExtractedFactResponse(StrictSchema):
+    field: str
+    value: str | None
+    source_reference: str | None
+    status: FactStatus
+
+
+class UnresolvedQuestionResponse(StrictSchema):
+    code: str
+    question: str
+    reason: str
+    blocking: bool
+
+
+class ContradictionResponse(StrictSchema):
+    code: str
+    description: str
+    source_references: list[str]
+    blocking: bool
+
+
+class ModelRunResponse(StrictSchema):
+    id: UUID
+    provider: str
+    model: str
+    prompt_version: str
+    status: ModelRunStatus
+    started_at: datetime
+    completed_at: datetime
+    request_id: str | None
+
+
+class IntakeAnalysisResponse(StrictSchema):
+    id: UUID
+    case_id: UUID
+    procedure_type: ProcedureType
+    procedure_reason: str
+    facts: list[ExtractedFactResponse]
+    assumptions: list[str]
+    unresolved_questions: list[UnresolvedQuestionResponse]
+    contradictions: list[ContradictionResponse]
+    requested_output_language: OutputLanguage
+    prompt_version: str
+    model_run_id: UUID
+    created_at: datetime
+
+
+class AnalysisAttemptResponse(StrictSchema):
+    case_status: CaseStatus
+    analysis: IntakeAnalysisResponse
+    model_run: ModelRunResponse
+
+    @classmethod
+    def from_attempt(cls, attempt: AnalysisAttempt) -> "AnalysisAttemptResponse":
+        analysis = attempt.analysis
+        run = attempt.model_run
+        if run.completed_at is None:
+            raise ValueError("completed analysis attempts require completed_at")
+        return cls(
+            case_status=attempt.case.status,
+            analysis=IntakeAnalysisResponse(
+                id=analysis.id,
+                case_id=analysis.case_id,
+                procedure_type=analysis.procedure_type,
+                procedure_reason=analysis.procedure_reason,
+                facts=[
+                    ExtractedFactResponse(
+                        field=fact.field,
+                        value=fact.value,
+                        source_reference=fact.source_reference,
+                        status=fact.status,
+                    )
+                    for fact in analysis.facts
+                ],
+                assumptions=list(analysis.assumptions),
+                unresolved_questions=[
+                    UnresolvedQuestionResponse(
+                        code=question.code,
+                        question=question.question,
+                        reason=question.reason,
+                        blocking=question.blocking,
+                    )
+                    for question in analysis.unresolved_questions
+                ],
+                contradictions=[
+                    ContradictionResponse(
+                        code=contradiction.code,
+                        description=contradiction.description,
+                        source_references=list(contradiction.source_references),
+                        blocking=contradiction.blocking,
+                    )
+                    for contradiction in analysis.contradictions
+                ],
+                requested_output_language=analysis.requested_output_language,
+                prompt_version=analysis.prompt_version,
+                model_run_id=analysis.model_run_id,
+                created_at=analysis.created_at,
+            ),
+            model_run=ModelRunResponse(
+                id=run.id,
+                provider=run.provider,
+                model=run.model,
+                prompt_version=run.prompt_version,
+                status=run.status,
+                started_at=run.started_at,
+                completed_at=run.completed_at,
+                request_id=run.request_id,
+            ),
         )
 
 

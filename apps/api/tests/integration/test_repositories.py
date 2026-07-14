@@ -2,19 +2,32 @@
 
 from dataclasses import replace
 from datetime import timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
-from app.domain import ActorType, CaseStatus, ProcedureType
+from app.domain import (
+    ActorType,
+    CaseStatus,
+    IntakeAnalysis,
+    ModelRun,
+    ModelRunPurpose,
+    ModelRunStatus,
+    ProcedureType,
+)
 from app.infrastructure.persistence import (
+    SqliteAnalysisRepository,
     SqliteAuditEventRepository,
     SqliteCaseRepository,
     SqliteDocumentMetadataRepository,
     SqliteSourceMessageRepository,
 )
 from app.infrastructure.persistence.fixtures import FIXTURE_TIME, SYNTHETIC_CASE_FIXTURES
-from app.infrastructure.persistence.models import AuditEventModel
-from sqlalchemy import delete, update
+from app.infrastructure.persistence.models import (
+    AuditEventModel,
+    IntakeAnalysisModel,
+    ModelRunModel,
+)
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -130,6 +143,74 @@ def test_audit_failure_rolls_back_the_state_transition(
     assert stored is not None
     assert stored.status is CaseStatus.ANALYZING
     assert len(audit.list_for_case(case.id)) == 1
+
+
+def test_analysis_success_rolls_back_state_analysis_and_audit_on_run_conflict(
+    session_factory: sessionmaker[Session],
+) -> None:
+    cases, audit, _messages, _documents = _repositories(session_factory)
+    fixture = SYNTHETIC_CASE_FIXTURES[0]
+    cases.add_intake(fixture.case, fixture.source_messages, fixture.documents)
+    started_at = FIXTURE_TIME + timedelta(minutes=1)
+    cases.transition(
+        fixture.case.id,
+        CaseStatus.ANALYZING,
+        actor_type=ActorType.SYSTEM,
+        actor_label="workflow",
+        occurred_at=started_at,
+    )
+    run_id = uuid4()
+    run = ModelRun(
+        id=run_id,
+        case_id=fixture.case.id,
+        purpose=ModelRunPurpose.INTAKE_ANALYSIS,
+        provider="openai",
+        model="gpt-5.6-test",
+        prompt_version="intake-test-v1",
+        started_at=started_at,
+        completed_at=started_at + timedelta(seconds=1),
+        status=ModelRunStatus.SUCCEEDED,
+    )
+    analysis = IntakeAnalysis(
+        id=uuid4(),
+        case_id=fixture.case.id,
+        procedure_type=fixture.case.procedure_type,
+        procedure_reason="Resultado sintético válido.",
+        facts=(),
+        assumptions=(),
+        unresolved_questions=(),
+        contradictions=(),
+        requested_output_language=fixture.case.output_language,
+        prompt_version=run.prompt_version,
+        model_run_id=run.id,
+        created_at=run.completed_at,
+    )
+    with session_factory.begin() as session:
+        session.add(
+            ModelRunModel(
+                id=run.id,
+                case_id=run.case_id,
+                purpose=run.purpose.value,
+                provider=run.provider,
+                model=run.model,
+                prompt_version=run.prompt_version,
+                started_at=run.started_at,
+                completed_at=run.completed_at,
+                status=ModelRunStatus.FAILED.value,
+                request_id=None,
+                sanitized_error_code="preexisting",
+            )
+        )
+
+    with pytest.raises(IntegrityError):
+        SqliteAnalysisRepository(session_factory).complete_success(run, analysis)
+
+    stored = cases.get(fixture.case.id)
+    assert stored is not None and stored.status is CaseStatus.ANALYZING
+    assert stored.intake_analysis_id is None
+    assert len(audit.list_for_case(fixture.case.id)) == 1
+    with session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(IntakeAnalysisModel)) == 0
 
 
 @pytest.mark.parametrize("operation", ["update", "delete"])
