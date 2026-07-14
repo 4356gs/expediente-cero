@@ -15,6 +15,11 @@ from app.application.analysis import (
 )
 from app.application.intake import IntakeCaseNotFoundError
 from app.application.ports.repositories import CaseReferenceConflictError
+from app.application.validation import (
+    ValidationCaseNotFoundError,
+    ValidationPersistenceError,
+    ValidationStateConflictError,
+)
 from app.domain.errors import DomainError
 
 
@@ -91,6 +96,22 @@ async def analysis_state_conflict_handler(_request: Request, error: Exception) -
     )
 
 
+async def validation_state_conflict_handler(_request: Request, error: Exception) -> JSONResponse:
+    return _response(
+        409,
+        code="validation_state_conflict",
+        message="The case state does not permit deterministic validation.",
+    )
+
+
+async def validation_persistence_handler(_request: Request, error: Exception) -> JSONResponse:
+    return _response(
+        500,
+        code="validation_persistence_failed",
+        message="The deterministic validation result could not be persisted.",
+    )
+
+
 def register_error_handlers(application: FastAPI) -> None:
     """Install the API's consistent typed error envelope."""
     application.add_exception_handler(RequestValidationError, request_validation_error_handler)
@@ -99,5 +120,10 @@ def register_error_handlers(application: FastAPI) -> None:
     application.add_exception_handler(AnalysisAttemptFailedError, analysis_failure_handler)
     application.add_exception_handler(AnalysisConfigurationError, analysis_configuration_handler)
     application.add_exception_handler(AnalysisStateConflictError, analysis_state_conflict_handler)
+    application.add_exception_handler(ValidationCaseNotFoundError, case_not_found_error_handler)
+    application.add_exception_handler(
+        ValidationStateConflictError, validation_state_conflict_handler
+    )
+    application.add_exception_handler(ValidationPersistenceError, validation_persistence_handler)
     application.add_exception_handler(DomainError, domain_error_handler)
     application.add_exception_handler(CaseReferenceConflictError, persistence_conflict_handler)

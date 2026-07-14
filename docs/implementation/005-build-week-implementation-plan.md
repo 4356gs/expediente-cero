@@ -61,6 +61,33 @@ schema-constrained GPT-5.6 output without exposing credentials.
   grant application.
 - Required-field, document, date-consistency, and blocking-question checks.
 - Checklist results kept separate from model-derived analysis.
+- Explicit synchronous `POST /cases/{case_id}/validation` trigger for cases in
+  `analyzed`; validation never performs a model call.
+- Atomic persistence of checklist results, findings, template version,
+  `validation_completed_at`, the `analyzed` -> `needs_review` transition, and
+  its audit event.
+
+The initial template version is `deterministic-validation-v1`. It defines
+bounded internal intake requirements, not legal requirements:
+
+| Procedure | Required fact fields | Required document types |
+| --- | --- | --- |
+| `self_employed_registration` | `activity`, `start_date` | `identity` |
+| `employee_hiring` | `employee_name`, `requested_start_date`, `contract_start_date` | `employment_contract` |
+| `grant_application` | `applicant_name`, `grant_program`, `project_summary` | `project_memo`, `detailed_budget` |
+
+Only a non-blank `stated` fact with a valid persisted source reference satisfies
+a required field. Inferred values require review; unknown, absent, or blank
+values are missing. Dates use `YYYY-MM-DD`. Employee requested and contract
+start dates must match. Procedure and output-language mismatches, invalid
+evidence references, invalid dates, conflicting stated values, and unresolved
+blocking questions create blocking findings. Model-reported contradictions are
+warnings unless an independent deterministic rule confirms them.
+
+Validation completes even when it produces blocking findings. The case enters
+`needs_review`, while the aggregate invariant prevents later approval.
+Repeating validation outside `analyzed` returns a state conflict; results are
+never partially persisted.
 
 Exit gate: fixture-based tests demonstrate missing data, contradictory dates,
 and a partial grant checklist; blocking findings cannot be overridden.
@@ -102,4 +129,3 @@ once hardening starts.
 If schedule pressure appears, reduce interface polish and deployment breadth.
 Do not remove deterministic validation, human approval, auditability, the three
 accepted demo scenarios, or the GPT-5.6 structured-output evidence.
-

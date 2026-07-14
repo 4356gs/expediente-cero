@@ -8,7 +8,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.application.analysis import AnalysisAttempt
 from app.application.intake import CaseIntake, CasePage
-from app.domain import CaseStatus, FactStatus, ModelRunStatus, OutputLanguage, ProcedureType
+from app.application.validation import ValidationAttempt
+from app.domain import (
+    CaseStatus,
+    ChecklistStatus,
+    FactStatus,
+    FindingSeverity,
+    ModelRunStatus,
+    OutputLanguage,
+    ProcedureType,
+)
 
 Reference = Annotated[str, Field(min_length=1, max_length=32)]
 MessageContent = Annotated[str, Field(min_length=1, max_length=8_000)]
@@ -251,6 +260,67 @@ class AnalysisAttemptResponse(StrictSchema):
                 completed_at=run.completed_at,
                 request_id=run.request_id,
             ),
+        )
+
+
+class ChecklistResultResponse(StrictSchema):
+    id: UUID
+    item_code: str
+    label: str
+    required: bool
+    status: ChecklistStatus
+    evidence_reference: str | None
+
+
+class ValidationFindingResponse(StrictSchema):
+    id: UUID
+    code: str
+    severity: FindingSeverity
+    message: str
+    field_reference: str | None
+    created_at: datetime
+
+
+class ValidationAttemptResponse(StrictSchema):
+    case_status: CaseStatus
+    template_version: str
+    validation_completed_at: datetime
+    missing_fields: list[str]
+    has_blocking_findings: bool
+    checklist_results: list[ChecklistResultResponse]
+    findings: list[ValidationFindingResponse]
+
+    @classmethod
+    def from_attempt(cls, attempt: ValidationAttempt) -> "ValidationAttemptResponse":
+        computation = attempt.computation
+        return cls(
+            case_status=attempt.case.status,
+            template_version=computation.template_version,
+            validation_completed_at=computation.completed_at,
+            missing_fields=list(computation.missing_fields),
+            has_blocking_findings=computation.has_blocking_findings,
+            checklist_results=[
+                ChecklistResultResponse(
+                    id=item.id,
+                    item_code=item.item_code,
+                    label=item.label,
+                    required=item.required,
+                    status=item.status,
+                    evidence_reference=item.evidence_reference,
+                )
+                for item in computation.checklist_results
+            ],
+            findings=[
+                ValidationFindingResponse(
+                    id=item.id,
+                    code=item.code,
+                    severity=item.severity,
+                    message=item.message,
+                    field_reference=item.field_reference,
+                    created_at=item.created_at,
+                )
+                for item in computation.findings
+            ],
         )
 
 

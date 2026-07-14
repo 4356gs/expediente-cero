@@ -65,6 +65,7 @@ def make_case(
         updated_at=NOW,
         intake_analysis_id=uuid4() if has_analysis else None,
         validation_completed_at=NOW if review_ready else None,
+        validation_template_version="deterministic-validation-test-v1" if review_ready else None,
         validation_findings=tuple(
             ValidationFinding(
                 id=uuid4(),

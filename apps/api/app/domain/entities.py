@@ -289,6 +289,7 @@ class Case:
     updated_at: datetime
     intake_analysis_id: UUID | None = None
     validation_completed_at: datetime | None = None
+    validation_template_version: str | None = None
     validation_findings: tuple[ValidationFinding, ...] = ()
     review_decision: ReviewDecision | None = None
 
@@ -302,6 +303,12 @@ class Case:
             _require_utc(self.validation_completed_at, "validation_completed_at")
             if not self.created_at <= self.validation_completed_at <= self.updated_at:
                 raise DomainInvariantError("validation timestamp must be within the case lifetime")
+        if self.validation_template_version is not None:
+            _require_text(self.validation_template_version, "validation_template_version")
+        if (self.validation_completed_at is None) != (self.validation_template_version is None):
+            raise DomainInvariantError(
+                "validation timestamp and template version must be recorded together"
+            )
         if any(finding.case_id != self.id for finding in self.validation_findings):
             raise DomainInvariantError("validation findings must belong to the case")
 

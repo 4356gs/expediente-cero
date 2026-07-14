@@ -7,6 +7,7 @@ from app.infrastructure.persistence.repositories import (
     SqliteCaseRepository,
     SqliteDocumentMetadataRepository,
     SqliteSourceMessageRepository,
+    SqliteValidationRepository,
 )
 
 __all__ = [
@@ -15,6 +16,7 @@ __all__ = [
     "SqliteCaseRepository",
     "SqliteDocumentMetadataRepository",
     "SqliteSourceMessageRepository",
+    "SqliteValidationRepository",
     "create_session_factory",
     "create_sqlite_engine",
 ]
