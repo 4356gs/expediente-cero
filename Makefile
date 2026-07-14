@@ -1,4 +1,4 @@
-.PHONY: install format lint typecheck test check run-api
+.PHONY: install format lint typecheck test check migrate run-api
 
 install:
 	python -m pip install -e ".[dev]"
@@ -19,6 +19,8 @@ test:
 
 check: lint typecheck test
 
+migrate:
+	python -m alembic -c apps/api/alembic.ini upgrade head
+
 run-api:
 	python -m uvicorn app.main:app --app-dir apps/api --reload
-

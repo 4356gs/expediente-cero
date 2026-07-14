@@ -8,8 +8,10 @@ version = "0.1.0"
 description = "AI-assisted intake backend for Expediente Cero"
 requires-python = ">=3.12,<3.14"
 dependencies = [
+  "alembic>=1.16,<2",
   "fastapi>=0.116,<1",
   "pydantic-settings>=2.10,<3",
+  "sqlalchemy>=2.0.41,<3",
   "uvicorn[standard]>=0.35,<1",
 ]
 
@@ -36,6 +38,7 @@ source = ["app"]
 
 [tool.coverage.report]
 exclude_also = [
+  "class .*\\bProtocol\\):",
   "if TYPE_CHECKING:",
   "if __name__ == .__main__.:",
 ]
@@ -54,6 +57,9 @@ files = ["apps/api/app"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = "uvicorn"
+module = "alembic.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "uvicorn"
+ignore_missing_imports = true

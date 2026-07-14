@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     api_docs_enabled: bool = True
+    database_url: str = "sqlite:///./data/expediente-cero.db"
     openai_api_key: SecretStr | None = Field(default=None, validation_alias="OPENAI_API_KEY")
 
 
