@@ -1,13 +1,20 @@
 """FastAPI application entry point."""
 
 from fastapi import FastAPI
+from sqlalchemy.orm import Session, sessionmaker
 
 from app import __version__
+from app.api.errors import register_error_handlers
+from app.api.routes.cases import router as cases_router
 from app.api.routes.health import router as health_router
 from app.core.config import Settings, get_settings
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    session_factory: sessionmaker[Session] | None = None,
+) -> FastAPI:
     """Build the API application without performing external I/O."""
     resolved_settings = settings or get_settings()
     docs_url = "/docs" if resolved_settings.api_docs_enabled else None
@@ -22,7 +29,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url=openapi_url,
     )
     application.state.settings = resolved_settings
+    application.state.session_factory = session_factory
+    register_error_handlers(application)
     application.include_router(health_router)
+    application.include_router(cases_router)
     return application
 
 

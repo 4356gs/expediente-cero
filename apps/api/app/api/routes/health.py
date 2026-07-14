@@ -21,12 +21,12 @@ class HealthResponse(BaseModel):
 
 
 @router.get("/health", response_model=HealthResponse, summary="Liveness probe")
-def health() -> HealthResponse:
+async def health() -> HealthResponse:
     """Report that the API process is alive."""
     return HealthResponse(status="ok", service="expediente-cero-api", version=__version__)
 
 
 @router.get("/ready", response_model=HealthResponse, summary="Readiness probe")
-def ready() -> HealthResponse:
+async def ready() -> HealthResponse:
     """Report readiness for the bootstrap stage, which has no external dependencies."""
     return HealthResponse(status="ok", service="expediente-cero-api", version=__version__)

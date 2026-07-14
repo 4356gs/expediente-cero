@@ -15,11 +15,23 @@ from app.domain import (
 )
 
 
+class CaseReferenceConflictError(RuntimeError):
+    """A new case uses a reference that is already persisted."""
+
+
 class CaseRepository(Protocol):
     """Store and retrieve case aggregates."""
 
     def add(self, case: Case) -> None:
         """Persist a new case aggregate."""
+
+    def add_intake(
+        self,
+        case: Case,
+        source_messages: tuple[SourceMessage, ...],
+        documents: tuple[DocumentMetadata, ...],
+    ) -> None:
+        """Persist a case and its complete synthetic intake atomically."""
 
     def get(self, case_id: UUID) -> Case | None:
         """Return a case by identifier, or ``None`` when absent."""

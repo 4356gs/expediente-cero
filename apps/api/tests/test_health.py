@@ -50,4 +50,33 @@ def test_openapi_contract_contains_operational_routes() -> None:
 
     paths = asyncio.run(request(app, "/openapi.json")).json()["paths"]
 
-    assert set(paths) == {"/health", "/ready"}
+    assert set(paths) == {"/health", "/ready", "/cases", "/cases/{case_id}"}
+
+
+def test_openapi_registers_unique_operations_and_case_schemas() -> None:
+    app = create_app(Settings(environment="test"))
+
+    document = asyncio.run(request(app, "/openapi.json")).json()
+    operations = [
+        operation
+        for path in document["paths"].values()
+        for method, operation in path.items()
+        if method in {"get", "post"}
+    ]
+    operation_ids = [operation["operationId"] for operation in operations]
+    schemas = document["components"]["schemas"]
+
+    assert len(operation_ids) == len(set(operation_ids))
+    assert {"CaseCreateRequest", "CaseResponse", "CaseListResponse", "ErrorEnvelope"} <= set(
+        schemas
+    )
+    assert document["paths"]["/cases"]["post"]["requestBody"]["content"]["application/json"][
+        "schema"
+    ]["$ref"].endswith("/CaseCreateRequest")
+    assert document["paths"]["/cases"]["post"]["responses"]["201"]["content"]["application/json"][
+        "schema"
+    ]["$ref"].endswith("/CaseResponse")
+    for status_code in ("404", "409", "422"):
+        assert document["paths"]["/cases/{case_id}"]["get"]["responses"][status_code]["content"][
+            "application/json"
+        ]["schema"]["$ref"].endswith("/ErrorEnvelope")

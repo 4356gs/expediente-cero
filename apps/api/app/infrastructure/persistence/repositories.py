@@ -4,8 +4,10 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
+from app.application.ports.repositories import CaseReferenceConflictError
 from app.domain import (
     ActorType,
     AuditEvent,
@@ -170,6 +172,41 @@ class SqliteCaseRepository:
     def add(self, case: Case) -> None:
         with self._session_factory.begin() as session:
             session.add(_case_to_model(case))
+
+    def add_intake(
+        self,
+        case: Case,
+        source_messages: tuple[SourceMessage, ...],
+        documents: tuple[DocumentMetadata, ...],
+    ) -> None:
+        try:
+            with self._session_factory.begin() as session:
+                session.add(_case_to_model(case))
+                session.add_all(
+                    SourceMessageModel(
+                        id=message.id,
+                        case_id=message.case_id,
+                        content=message.content,
+                        is_synthetic=message.is_synthetic,
+                        created_at=message.created_at,
+                    )
+                    for message in source_messages
+                )
+                session.add_all(
+                    DocumentMetadataModel(
+                        id=document.id,
+                        case_id=document.case_id,
+                        document_type=document.document_type,
+                        display_name=document.display_name,
+                        is_synthetic=document.is_synthetic,
+                        created_at=document.created_at,
+                    )
+                    for document in documents
+                )
+        except IntegrityError as error:
+            if "UNIQUE constraint failed: cases.reference" in str(error.orig):
+                raise CaseReferenceConflictError(case.reference) from error
+            raise
 
     def get(self, case_id: UUID) -> Case | None:
         with self._session_factory() as session:
