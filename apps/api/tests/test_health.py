@@ -50,7 +50,13 @@ def test_openapi_contract_contains_operational_routes() -> None:
 
     paths = asyncio.run(request(app, "/openapi.json")).json()["paths"]
 
-    assert set(paths) == {"/health", "/ready", "/cases", "/cases/{case_id}"}
+    assert set(paths) == {
+        "/health",
+        "/ready",
+        "/cases",
+        "/cases/{case_id}",
+        "/cases/{case_id}/analysis",
+    }
 
 
 def test_openapi_registers_unique_operations_and_case_schemas() -> None:
@@ -67,9 +73,13 @@ def test_openapi_registers_unique_operations_and_case_schemas() -> None:
     schemas = document["components"]["schemas"]
 
     assert len(operation_ids) == len(set(operation_ids))
-    assert {"CaseCreateRequest", "CaseResponse", "CaseListResponse", "ErrorEnvelope"} <= set(
-        schemas
-    )
+    assert {
+        "AnalysisAttemptResponse",
+        "CaseCreateRequest",
+        "CaseResponse",
+        "CaseListResponse",
+        "ErrorEnvelope",
+    } <= set(schemas)
     assert document["paths"]["/cases"]["post"]["requestBody"]["content"]["application/json"][
         "schema"
     ]["$ref"].endswith("/CaseCreateRequest")

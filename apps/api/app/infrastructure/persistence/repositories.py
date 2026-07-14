@@ -1,9 +1,10 @@
 """SQLite implementations of the application persistence ports."""
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
@@ -16,6 +17,9 @@ from app.domain import (
     CaseStatus,
     DocumentMetadata,
     FindingSeverity,
+    IntakeAnalysis,
+    InvalidTransitionError,
+    ModelRun,
     OutputLanguage,
     ProcedureType,
     ReviewDecision,
@@ -29,6 +33,8 @@ from app.infrastructure.persistence.models import (
     AuditEventModel,
     CaseModel,
     DocumentMetadataModel,
+    IntakeAnalysisModel,
+    ModelRunModel,
     ReviewDecisionModel,
     SourceMessageModel,
     ValidationFindingModel,
@@ -151,6 +157,63 @@ def _audit_to_domain(row: AuditEventModel) -> AuditEvent:
     )
 
 
+def _model_run_to_model(run: ModelRun) -> ModelRunModel:
+    return ModelRunModel(
+        id=run.id,
+        case_id=run.case_id,
+        purpose=run.purpose.value,
+        provider=run.provider,
+        model=run.model,
+        prompt_version=run.prompt_version,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        status=run.status.value,
+        request_id=run.request_id,
+        sanitized_error_code=run.sanitized_error_code,
+    )
+
+
+def _analysis_to_model(analysis: IntakeAnalysis) -> IntakeAnalysisModel:
+    return IntakeAnalysisModel(
+        id=analysis.id,
+        case_id=analysis.case_id,
+        procedure_type=analysis.procedure_type.value,
+        procedure_reason=analysis.procedure_reason,
+        facts=[
+            {
+                "field": fact.field,
+                "value": fact.value,
+                "source_reference": fact.source_reference,
+                "status": fact.status.value,
+            }
+            for fact in analysis.facts
+        ],
+        assumptions=list(analysis.assumptions),
+        unresolved_questions=[
+            {
+                "code": question.code,
+                "question": question.question,
+                "reason": question.reason,
+                "blocking": question.blocking,
+            }
+            for question in analysis.unresolved_questions
+        ],
+        contradictions=[
+            {
+                "code": contradiction.code,
+                "description": contradiction.description,
+                "source_references": list(contradiction.source_references),
+                "blocking": contradiction.blocking,
+            }
+            for contradiction in analysis.contradictions
+        ],
+        requested_output_language=analysis.requested_output_language.value,
+        prompt_version=analysis.prompt_version,
+        model_run_id=analysis.model_run_id,
+        created_at=analysis.created_at,
+    )
+
+
 def _load_case(session: Session, case_id: UUID) -> CaseModel | None:
     statement = (
         select(CaseModel)
@@ -252,8 +315,20 @@ class SqliteCaseRepository:
                 audit_event_id=audit_event_id,
                 decision_id=decision_id,
             )
-            row.status = outcome.case.status.value
-            row.updated_at = outcome.case.updated_at
+            result = session.connection().execute(
+                update(CaseModel)
+                .where(
+                    CaseModel.id == case_id,
+                    CaseModel.status == row.status,
+                    CaseModel.updated_at == row.updated_at,
+                )
+                .values(
+                    status=outcome.case.status.value,
+                    updated_at=outcome.case.updated_at,
+                )
+            )
+            if result.rowcount != 1:
+                raise InvalidTransitionError("case state changed concurrently")
             if outcome.case.review_decision:
                 decision = outcome.case.review_decision
                 row.review_decision = ReviewDecisionModel(
@@ -283,6 +358,58 @@ class SqliteAuditEventRepository:
                 .order_by(AuditEventModel.recorded_at, AuditEventModel.id)
             ).all()
             return tuple(_audit_to_domain(row) for row in rows)
+
+
+class SqliteAnalysisRepository:
+    """Atomic SQLite adapter for completed intake-analysis attempts."""
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+
+    def complete_success(self, model_run: ModelRun, analysis: IntakeAnalysis) -> Case:
+        with self._session_factory.begin() as session:
+            row = _load_case(session, analysis.case_id)
+            if row is None:
+                raise CaseNotFoundError(str(analysis.case_id))
+            case_with_analysis = replace(_case_to_domain(row), intake_analysis_id=analysis.id)
+            outcome = transition_case(
+                case_with_analysis,
+                CaseStatus.ANALYZED,
+                actor_type=ActorType.SYSTEM,
+                actor_label="intake-analysis-workflow",
+                occurred_at=analysis.created_at,
+            )
+            session.add(_model_run_to_model(model_run))
+            session.flush()
+            session.add(_analysis_to_model(analysis))
+            row.intake_analysis_id = analysis.id
+            row.status = outcome.case.status.value
+            row.updated_at = outcome.case.updated_at
+            session.add(_audit_to_model(outcome.audit_event))
+            session.flush()
+            return outcome.case
+
+    def complete_failure(self, model_run: ModelRun) -> Case:
+        completed_at = model_run.completed_at
+        if completed_at is None:
+            raise ValueError("completed model runs require completed_at")
+        with self._session_factory.begin() as session:
+            row = _load_case(session, model_run.case_id)
+            if row is None:
+                raise CaseNotFoundError(str(model_run.case_id))
+            outcome = transition_case(
+                _case_to_domain(row),
+                CaseStatus.ANALYSIS_FAILED,
+                actor_type=ActorType.SYSTEM,
+                actor_label="intake-analysis-workflow",
+                occurred_at=completed_at,
+            )
+            session.add(_model_run_to_model(model_run))
+            row.status = outcome.case.status.value
+            row.updated_at = outcome.case.updated_at
+            session.add(_audit_to_model(outcome.audit_event))
+            session.flush()
+            return outcome.case
 
 
 class SqliteSourceMessageRepository:

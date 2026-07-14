@@ -4,22 +4,27 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
+from openai import OpenAI
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.schemas import (
+    AnalysisAttemptResponse,
     CaseCreateRequest,
     CaseListResponse,
     CaseResponse,
     ErrorEnvelope,
 )
+from app.application.analysis import AnalysisConfigurationError, IntakeAnalysisService
 from app.application.intake import IntakeService, NewDocument
 from app.infrastructure.persistence import (
+    SqliteAnalysisRepository,
     SqliteCaseRepository,
     SqliteDocumentMetadataRepository,
     SqliteSourceMessageRepository,
     create_session_factory,
     create_sqlite_engine,
 )
+from app.integrations.openai import OpenAIIntakeAnalyzer
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 
@@ -53,6 +58,29 @@ async def intake_service(request: Request) -> IntakeService:
 IntakeServiceDependency = Annotated[IntakeService, Depends(intake_service)]
 
 
+async def analysis_service(request: Request) -> IntakeAnalysisService:
+    """Build the synchronous analysis use case without making an external call."""
+    factory = _session_factory(request)
+    settings = request.app.state.settings
+    if settings.openai_api_key is None:
+        raise AnalysisConfigurationError
+    client = OpenAI(
+        api_key=settings.openai_api_key.get_secret_value(),
+        timeout=settings.openai_timeout_seconds,
+        max_retries=0,
+    )
+    return IntakeAnalysisService(
+        SqliteCaseRepository(factory),
+        SqliteSourceMessageRepository(factory),
+        SqliteDocumentMetadataRepository(factory),
+        SqliteAnalysisRepository(factory),
+        OpenAIIntakeAnalyzer(client, model=settings.openai_model),
+    )
+
+
+AnalysisServiceDependency = Annotated[IntakeAnalysisService, Depends(analysis_service)]
+
+
 @router.post(
     "",
     response_model=CaseResponse,
@@ -78,6 +106,22 @@ async def create_case(payload: CaseCreateRequest, service: IntakeServiceDependen
         ),
     )
     return CaseResponse.from_intake(intake)
+
+
+@router.post(
+    "/{case_id}/analysis",
+    response_model=AnalysisAttemptResponse,
+    responses={
+        **ERROR_RESPONSES,
+        502: {"model": ErrorEnvelope},
+        503: {"model": ErrorEnvelope},
+        504: {"model": ErrorEnvelope},
+    },
+)
+async def analyze_case(
+    case_id: UUID, service: AnalysisServiceDependency
+) -> AnalysisAttemptResponse:
+    return AnalysisAttemptResponse.from_attempt(service.analyze(case_id))
 
 
 @router.get("/{case_id}", response_model=CaseResponse, responses=ERROR_RESPONSES)

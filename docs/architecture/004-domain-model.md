@@ -22,6 +22,7 @@ schemas, and reviewer interface without coupling them to any framework.
 
 - `draft`
 - `analyzing`
+- `analyzed`
 - `needs_review`
 - `approved`
 - `rejected`
@@ -217,9 +218,10 @@ Audit events are append-only.
 Allowed transitions:
 
 - `draft` -> `analyzing`
-- `analyzing` -> `needs_review`
+- `analyzing` -> `analyzed`
 - `analyzing` -> `analysis_failed`
 - `analysis_failed` -> `analyzing`
+- `analyzed` -> `needs_review`
 - `needs_review` -> `analyzing`
 - `needs_review` -> `approved`
 - `needs_review` -> `rejected`
@@ -238,6 +240,8 @@ Allowed transitions:
 8. All hackathon source messages and document metadata must be synthetic.
 9. Original model text is immutable after persistence.
 10. Only the application service may coordinate aggregate state transitions.
+11. An `analyzed` case has a persisted intake analysis but no implied deterministic
+    validation result.
 
 ## Procedure templates
 

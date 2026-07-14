@@ -25,7 +25,20 @@ NOW = datetime(2026, 7, 13, 18, 0, tzinfo=UTC)
 CASE_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
-def make_case(status: CaseStatus, *, blocking: int = 0, prepared: bool = False) -> Case:
+def make_case(
+    status: CaseStatus, *, blocking: int = 0, prepared: bool = False, analyzed: bool = False
+) -> Case:
+    has_analysis = (
+        prepared
+        or analyzed
+        or status
+        in {
+            CaseStatus.ANALYZED,
+            CaseStatus.NEEDS_REVIEW,
+            CaseStatus.APPROVED,
+            CaseStatus.REJECTED,
+        }
+    )
     review_ready = prepared or status in {
         CaseStatus.NEEDS_REVIEW,
         CaseStatus.APPROVED,
@@ -50,7 +63,7 @@ def make_case(status: CaseStatus, *, blocking: int = 0, prepared: bool = False) 
         status=status,
         created_at=NOW,
         updated_at=NOW,
-        intake_analysis_id=uuid4() if review_ready else None,
+        intake_analysis_id=uuid4() if has_analysis else None,
         validation_completed_at=NOW if review_ready else None,
         validation_findings=tuple(
             ValidationFinding(
@@ -76,7 +89,11 @@ def test_every_allowed_transition_returns_state_and_audit_event(
     )
     occurred_at = NOW + timedelta(minutes=1)
     outcome = transition_case(
-        make_case(source, prepared=target is CaseStatus.NEEDS_REVIEW),
+        make_case(
+            source,
+            prepared=target is CaseStatus.NEEDS_REVIEW,
+            analyzed=target is CaseStatus.ANALYZED,
+        ),
         target,
         actor_type=actor,
         actor_label="Reviewer" if actor is ActorType.USER else "workflow",
