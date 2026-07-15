@@ -15,7 +15,11 @@ from app.domain import (
     AuditEventType,
     Case,
     CaseStatus,
+    ChecklistResult,
+    Contradiction,
     DocumentMetadata,
+    ExtractedFact,
+    FactStatus,
     FindingSeverity,
     IntakeAnalysis,
     InvalidTransitionError,
@@ -26,12 +30,14 @@ from app.domain import (
     ReviewDecisionType,
     SourceMessage,
     TransitionOutcome,
+    UnresolvedQuestion,
     ValidationFinding,
     transition_case,
 )
 from app.infrastructure.persistence.models import (
     AuditEventModel,
     CaseModel,
+    ChecklistResultModel,
     DocumentMetadataModel,
     IntakeAnalysisModel,
     ModelRunModel,
@@ -87,6 +93,7 @@ def _case_to_domain(row: CaseModel) -> Case:
         validation_completed_at=(
             _utc(row.validation_completed_at) if row.validation_completed_at else None
         ),
+        validation_template_version=row.validation_template_version,
         validation_findings=tuple(
             _finding_to_domain(finding)
             for finding in sorted(row.validation_findings, key=lambda item: str(item.id))
@@ -106,6 +113,7 @@ def _case_to_model(case: Case) -> CaseModel:
         updated_at=case.updated_at,
         intake_analysis_id=case.intake_analysis_id,
         validation_completed_at=case.validation_completed_at,
+        validation_template_version=case.validation_template_version,
         validation_findings=[
             ValidationFindingModel(
                 id=finding.id,
@@ -211,6 +219,47 @@ def _analysis_to_model(analysis: IntakeAnalysis) -> IntakeAnalysisModel:
         prompt_version=analysis.prompt_version,
         model_run_id=analysis.model_run_id,
         created_at=analysis.created_at,
+    )
+
+
+def _analysis_to_domain(row: IntakeAnalysisModel) -> IntakeAnalysis:
+    return IntakeAnalysis(
+        id=row.id,
+        case_id=row.case_id,
+        procedure_type=ProcedureType(row.procedure_type),
+        procedure_reason=row.procedure_reason,
+        facts=tuple(
+            ExtractedFact(
+                field=item["field"],
+                value=item["value"],
+                source_reference=item["source_reference"],
+                status=FactStatus(item["status"]),
+            )
+            for item in row.facts
+        ),
+        assumptions=tuple(row.assumptions),
+        unresolved_questions=tuple(
+            UnresolvedQuestion(
+                code=item["code"],
+                question=item["question"],
+                reason=item["reason"],
+                blocking=item["blocking"],
+            )
+            for item in row.unresolved_questions
+        ),
+        contradictions=tuple(
+            Contradiction(
+                code=item["code"],
+                description=item["description"],
+                source_references=tuple(item["source_references"]),
+                blocking=item["blocking"],
+            )
+            for item in row.contradictions
+        ),
+        requested_output_language=OutputLanguage(row.requested_output_language),
+        prompt_version=row.prompt_version,
+        model_run_id=row.model_run_id,
+        created_at=_utc(row.created_at),
     )
 
 
@@ -366,6 +415,13 @@ class SqliteAnalysisRepository:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
 
+    def get_for_case(self, case_id: UUID) -> IntakeAnalysis | None:
+        with self._session_factory() as session:
+            row = session.scalar(
+                select(IntakeAnalysisModel).where(IntakeAnalysisModel.case_id == case_id)
+            )
+            return _analysis_to_domain(row) if row else None
+
     def complete_success(self, model_run: ModelRun, analysis: IntakeAnalysis) -> Case:
         with self._session_factory.begin() as session:
             row = _load_case(session, analysis.case_id)
@@ -410,6 +466,99 @@ class SqliteAnalysisRepository:
             session.add(_audit_to_model(outcome.audit_event))
             session.flush()
             return outcome.case
+
+
+class SqliteValidationRepository:
+    """Atomic SQLite adapter for deterministic validation completion."""
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+
+    def complete_validation(
+        self,
+        case_id: UUID,
+        *,
+        template_version: str,
+        completed_at: datetime,
+        checklist_results: tuple[ChecklistResult, ...],
+        findings: tuple[ValidationFinding, ...],
+    ) -> Case:
+        with self._session_factory.begin() as session:
+            row = _load_case(session, case_id)
+            if row is None:
+                raise CaseNotFoundError(str(case_id))
+            if row.status != CaseStatus.ANALYZED.value:
+                raise InvalidTransitionError("case is not awaiting deterministic validation")
+
+            validated_case = replace(
+                _case_to_domain(row),
+                updated_at=completed_at,
+                validation_completed_at=completed_at,
+                validation_template_version=template_version,
+                validation_findings=findings,
+            )
+            outcome = transition_case(
+                validated_case,
+                CaseStatus.NEEDS_REVIEW,
+                actor_type=ActorType.SYSTEM,
+                actor_label="deterministic-validation-workflow",
+                occurred_at=completed_at,
+            )
+            event = replace(
+                outcome.audit_event,
+                sanitized_metadata={
+                    **outcome.audit_event.sanitized_metadata,
+                    "template_version": template_version,
+                    "checklist_count": str(len(checklist_results)),
+                    "finding_count": str(len(findings)),
+                    "blocking_count": str(
+                        sum(finding.severity is FindingSeverity.BLOCKING for finding in findings)
+                    ),
+                },
+            )
+            session.add_all(
+                ChecklistResultModel(
+                    id=item.id,
+                    case_id=item.case_id,
+                    item_code=item.item_code,
+                    label=item.label,
+                    required=item.required,
+                    status=item.status.value,
+                    evidence_reference=item.evidence_reference,
+                )
+                for item in checklist_results
+            )
+            session.add_all(
+                ValidationFindingModel(
+                    id=finding.id,
+                    case_id=finding.case_id,
+                    code=finding.code,
+                    severity=finding.severity.value,
+                    message=finding.message,
+                    field_reference=finding.field_reference,
+                    created_at=finding.created_at,
+                )
+                for finding in findings
+            )
+            result = session.connection().execute(
+                update(CaseModel)
+                .where(
+                    CaseModel.id == case_id,
+                    CaseModel.status == CaseStatus.ANALYZED.value,
+                    CaseModel.updated_at == row.updated_at,
+                )
+                .values(
+                    validation_completed_at=completed_at,
+                    validation_template_version=template_version,
+                    status=outcome.case.status.value,
+                    updated_at=outcome.case.updated_at,
+                )
+            )
+            if result.rowcount != 1:
+                raise InvalidTransitionError("case state changed concurrently")
+            session.add(_audit_to_model(event))
+            session.flush()
+            return replace(outcome.case, validation_findings=findings)
 
 
 class SqliteSourceMessageRepository:

@@ -18,6 +18,7 @@ from app.application.ports.repositories import (
     CaseRepository,
     DocumentMetadataRepository,
     SourceMessageRepository,
+    ValidationRepository,
 )
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "IntakeAnalyzerError",
     "SourceMessageRepository",
     "StructuredIntake",
+    "ValidationRepository",
 ]

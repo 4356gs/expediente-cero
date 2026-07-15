@@ -13,14 +13,17 @@ from app.api.schemas import (
     CaseListResponse,
     CaseResponse,
     ErrorEnvelope,
+    ValidationAttemptResponse,
 )
 from app.application.analysis import AnalysisConfigurationError, IntakeAnalysisService
 from app.application.intake import IntakeService, NewDocument
+from app.application.validation import IntakeValidationService
 from app.infrastructure.persistence import (
     SqliteAnalysisRepository,
     SqliteCaseRepository,
     SqliteDocumentMetadataRepository,
     SqliteSourceMessageRepository,
+    SqliteValidationRepository,
     create_session_factory,
     create_sqlite_engine,
 )
@@ -81,6 +84,21 @@ async def analysis_service(request: Request) -> IntakeAnalysisService:
 AnalysisServiceDependency = Annotated[IntakeAnalysisService, Depends(analysis_service)]
 
 
+async def validation_service(request: Request) -> IntakeValidationService:
+    """Build the provider-free deterministic validation use case."""
+    factory = _session_factory(request)
+    return IntakeValidationService(
+        SqliteCaseRepository(factory),
+        SqliteSourceMessageRepository(factory),
+        SqliteDocumentMetadataRepository(factory),
+        SqliteAnalysisRepository(factory),
+        SqliteValidationRepository(factory),
+    )
+
+
+ValidationServiceDependency = Annotated[IntakeValidationService, Depends(validation_service)]
+
+
 @router.post(
     "",
     response_model=CaseResponse,
@@ -122,6 +140,17 @@ async def analyze_case(
     case_id: UUID, service: AnalysisServiceDependency
 ) -> AnalysisAttemptResponse:
     return AnalysisAttemptResponse.from_attempt(service.analyze(case_id))
+
+
+@router.post(
+    "/{case_id}/validation",
+    response_model=ValidationAttemptResponse,
+    responses={**ERROR_RESPONSES, 500: {"model": ErrorEnvelope}},
+)
+async def validate_case(
+    case_id: UUID, service: ValidationServiceDependency
+) -> ValidationAttemptResponse:
+    return ValidationAttemptResponse.from_attempt(service.validate(case_id))
 
 
 @router.get("/{case_id}", response_model=CaseResponse, responses=ERROR_RESPONSES)

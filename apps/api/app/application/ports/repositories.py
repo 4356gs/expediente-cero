@@ -9,11 +9,13 @@ from app.domain import (
     AuditEvent,
     Case,
     CaseStatus,
+    ChecklistResult,
     DocumentMetadata,
     IntakeAnalysis,
     ModelRun,
     SourceMessage,
     TransitionOutcome,
+    ValidationFinding,
 )
 
 
@@ -91,3 +93,21 @@ class AnalysisRepository(Protocol):
 
     def complete_failure(self, model_run: ModelRun) -> Case:
         """Atomically store failure metadata, failed state, and audit."""
+
+    def get_for_case(self, case_id: UUID) -> IntakeAnalysis | None:
+        """Return the current structured analysis for a case, if present."""
+
+
+class ValidationRepository(Protocol):
+    """Persist one complete deterministic validation transaction."""
+
+    def complete_validation(
+        self,
+        case_id: UUID,
+        *,
+        template_version: str,
+        completed_at: datetime,
+        checklist_results: tuple[ChecklistResult, ...],
+        findings: tuple[ValidationFinding, ...],
+    ) -> Case:
+        """Store results, review-ready state, timestamp, version, and audit atomically."""

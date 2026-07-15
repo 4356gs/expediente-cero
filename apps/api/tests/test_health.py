@@ -56,6 +56,7 @@ def test_openapi_contract_contains_operational_routes() -> None:
         "/cases",
         "/cases/{case_id}",
         "/cases/{case_id}/analysis",
+        "/cases/{case_id}/validation",
     }
 
 
@@ -79,6 +80,7 @@ def test_openapi_registers_unique_operations_and_case_schemas() -> None:
         "CaseResponse",
         "CaseListResponse",
         "ErrorEnvelope",
+        "ValidationAttemptResponse",
     } <= set(schemas)
     assert document["paths"]["/cases"]["post"]["requestBody"]["content"]["application/json"][
         "schema"

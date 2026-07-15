@@ -97,6 +97,11 @@ for the follow-up draft. It does not implement an autonomous agent loop.
 
 Validation executes after schema parsing and independently of the model.
 
+An API client triggers it explicitly with
+`POST /cases/{case_id}/validation` after analysis has produced `analyzed`. The
+synchronous use case reads only persisted synthetic intake and analysis records
+and performs no OpenAI request.
+
 It checks:
 
 - required fields for the selected procedure;
@@ -107,6 +112,10 @@ It checks:
 - permitted case-state transitions.
 
 Model confidence cannot override a deterministic blocking finding.
+
+One transaction stores checklist results, findings, template version,
+completion timestamp, the `needs_review` state, and its audit event. Blocking
+findings do not fail validation; they prevent subsequent approval.
 
 ## Persistence
 

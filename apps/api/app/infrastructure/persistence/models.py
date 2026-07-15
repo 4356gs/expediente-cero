@@ -26,6 +26,7 @@ class CaseModel(Base):
     validation_completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    validation_template_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     validation_findings: Mapped[list["ValidationFindingModel"]] = relationship(
         back_populates="case", cascade="all, delete-orphan", lazy="selectin"

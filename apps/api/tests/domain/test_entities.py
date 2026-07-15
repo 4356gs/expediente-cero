@@ -318,6 +318,8 @@ def make_case(**overrides: object) -> Case:
             {"validation_completed_at": NOW + timedelta(seconds=1)},
             "validation timestamp must be within",
         ),
+        ({"validation_completed_at": NOW}, "recorded together"),
+        ({"validation_template_version": "validation-v1"}, "recorded together"),
         ({"status": CaseStatus.NEEDS_REVIEW}, "require an intake analysis"),
         ({"status": CaseStatus.ANALYZED}, "analyzed cases require an intake analysis"),
         (
@@ -337,6 +339,7 @@ def test_case_rejects_invalid_terminal_decisions() -> None:
     base = {
         "intake_analysis_id": uuid4(),
         "validation_completed_at": NOW,
+        "validation_template_version": "deterministic-validation-test-v1",
         "status": CaseStatus.APPROVED,
     }
     with pytest.raises(DomainInvariantError, match="require a review decision"):

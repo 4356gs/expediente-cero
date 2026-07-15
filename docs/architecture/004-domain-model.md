@@ -54,6 +54,10 @@ Required attributes:
 - `status`: current lifecycle state;
 - `created_at`: timezone-aware UTC timestamp;
 - `updated_at`: timezone-aware UTC timestamp.
+- `validation_completed_at`: set only after all deterministic results are
+  persisted atomically;
+- `validation_template_version`: version of the rules that produced the current
+  deterministic results.
 
 Relationships:
 
@@ -256,3 +260,9 @@ Each procedure template defines:
 
 Templates are versioned application configuration. They do not encode legal
 eligibility or replace professional review.
+
+The initial version is `deterministic-validation-v1`. Its exact required facts
+and document types are defined in the Build Week implementation plan. Only
+non-blank stated facts with valid persisted evidence satisfy required fields.
+A completed validation may contain blocking findings while the case is in
+`needs_review`.

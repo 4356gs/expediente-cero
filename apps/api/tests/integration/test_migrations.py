@@ -33,9 +33,11 @@ def test_initial_migration_upgrades_a_blank_database(database_url: str) -> None:
             revision = connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
             ).scalar()
-        assert revision == "20260714_0002"
+        assert revision == "20260714_0003"
         constraints = {item["name"] for item in inspect(engine).get_check_constraints("cases")}
         assert "ck_cases_analyzed_requires_analysis" in constraints
+        assert "ck_cases_validation_pair" in constraints
+        assert "ck_cases_review_requires_validation" in constraints
     finally:
         engine.dispose()
 

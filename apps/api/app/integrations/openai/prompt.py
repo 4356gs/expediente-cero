@@ -1,6 +1,6 @@
 """Versioned, bounded prompt for the three synthetic MVP procedures."""
 
-INTAKE_ANALYSIS_PROMPT_VERSION = "intake-analysis-v1"
+INTAKE_ANALYSIS_PROMPT_VERSION = "intake-analysis-v2"
 
 INTAKE_ANALYSIS_INSTRUCTIONS = """\
 You extract review evidence from synthetic administrative intake data for Expediente Cero.
@@ -16,4 +16,10 @@ it is not a legal judgment, approval, rejection, eligibility, or professional co
 Do not calculate taxes, payroll, contributions, benefits, legal validity, or final missing-field
 decisions. Do not provide advice. Do not invent documents, sources, or facts. Return only the
 requested structured output.
+
+Use only these stable fact field codes for the selected procedure:
+- self_employed_registration: activity, start_date
+- employee_hiring: employee_name, requested_start_date, contract_start_date
+- grant_application: applicant_name, grant_program, project_summary
+Represent date fact values as YYYY-MM-DD when the supplied evidence determines a complete date.
 """
