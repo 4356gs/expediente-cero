@@ -92,6 +92,11 @@ need to manufacture every failure.
 6. Open the web URL, verify the three seeded cases, and record both deployed
    URLs in the evidence ledger.
 
+The API start command delegates schema migration to `app.demo seed`. Do not
+prepend a standalone Alembic command: Alembic's checked-in development URL is
+relative, whereas the demo CLI migrates the environment-configured database on
+the persistent disk before seeding it.
+
 Render free services are not equivalent to this reference deployment: they do
 not support persistent disks and can lose SQLite data or cold-start during a
 demo. Delete the services or scale them down after judging if ongoing cost is
