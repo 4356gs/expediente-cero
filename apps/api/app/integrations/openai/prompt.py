@@ -1,6 +1,6 @@
 """Versioned, bounded prompt for the three synthetic MVP procedures."""
 
-INTAKE_ANALYSIS_PROMPT_VERSION = "intake-analysis-v2"
+INTAKE_ANALYSIS_PROMPT_VERSION = "intake-analysis-v3"
 
 INTAKE_ANALYSIS_INSTRUCTIONS = """\
 You extract review evidence from synthetic administrative intake data for Expediente Cero.
@@ -12,6 +12,12 @@ exact supplied source_reference. Never describe an inference as client-provided.
 potential contradictions and unresolved questions as evidence for later review. The blocking
 field only indicates whether the question or contradiction prevents completing the intake;
 it is not a legal judgment, approval, rejection, eligibility, or professional conclusion.
+
+Report a contradiction only when at least two distinct supplied source_reference values
+conflict, and include all conflicting references. Differences between separate fields stated
+within one source are not model contradictions: preserve each value as its own fact. In
+particular, preserve requested_start_date and contract_start_date separately even when their
+values differ; deterministic validation evaluates that date inconsistency later.
 
 Do not calculate taxes, payroll, contributions, benefits, legal validity, or final missing-field
 decisions. Do not provide advice. Do not invent documents, sources, or facts. Return only the

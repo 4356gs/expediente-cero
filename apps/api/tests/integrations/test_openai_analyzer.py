@@ -61,6 +61,7 @@ def test_valid_parsed_response_uses_bounded_stateless_request() -> None:
     assert isinstance(result, AnalyzerSuccess)
     assert result.request_id == "req_synthetic"
     assert result.output.facts[0].status is FactStatus.STATED
+    assert INTAKE_ANALYSIS_PROMPT_VERSION == "intake-analysis-v3"
     assert analyzer.prompt_version == INTAKE_ANALYSIS_PROMPT_VERSION
     kwargs = client.responses.parse.call_args.kwargs
     assert kwargs["model"] == "gpt-5.6"
@@ -70,6 +71,58 @@ def test_valid_parsed_response_uses_bounded_stateless_request() -> None:
     assert "previous_response_id" not in kwargs
     assert "Diseño" not in kwargs["instructions"]
     assert fixture.source_messages[0].content in kwargs["input"]
+
+
+def test_galician_employee_dates_remain_separate_facts_without_model_contradiction() -> None:
+    fixture = SYNTHETIC_CASE_FIXTURES[1]
+    source_reference = f"message:{fixture.source_messages[0].id}"
+    parsed = IntakeAnalysisOutput(
+        procedure_type=ProcedureType.EMPLOYEE_HIRING,
+        procedure_reason="A mensaxe solicita unha contratación sintética.",
+        facts=[
+            ExtractedFactOutput(
+                field="employee_name",
+                value=None,
+                source_reference=None,
+                status=FactStatus.UNKNOWN,
+            ),
+            ExtractedFactOutput(
+                field="requested_start_date",
+                value="2026-09-01",
+                source_reference=source_reference,
+                status=FactStatus.STATED,
+            ),
+            ExtractedFactOutput(
+                field="contract_start_date",
+                value="2026-09-15",
+                source_reference=source_reference,
+                status=FactStatus.STATED,
+            ),
+        ],
+        assumptions=[],
+        unresolved_questions=[],
+        contradictions=[],
+        requested_output_language=OutputLanguage.GALICIAN,
+    )
+    response = SimpleNamespace(
+        _request_id="req_galician_employee",
+        output=[SimpleNamespace(type="message", content=[])],
+        output_parsed=parsed,
+    )
+    analyzer, client = adapter_with_response(response)
+
+    result = analyzer.analyze(fixture.case, fixture.source_messages, fixture.documents)
+
+    assert isinstance(result, AnalyzerSuccess)
+    assert result.output.requested_output_language is OutputLanguage.GALICIAN
+    assert [fact.field for fact in result.output.facts[1:]] == [
+        "requested_start_date",
+        "contract_start_date",
+    ]
+    assert result.output.contradictions == ()
+    instructions = client.responses.parse.call_args.kwargs["instructions"]
+    assert "at least two distinct supplied source_reference values" in instructions
+    assert "deterministic validation evaluates that date inconsistency later" in instructions
 
 
 def test_refusal_is_returned_without_retaining_refusal_text() -> None:
