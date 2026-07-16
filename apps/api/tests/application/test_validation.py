@@ -33,12 +33,17 @@ CASE_ID = UUID("30000000-0000-0000-0000-000000000001")
 MESSAGE_ID = UUID("31000000-0000-0000-0000-000000000001")
 
 
-def case(procedure: ProcedureType, *, status: CaseStatus = CaseStatus.ANALYZED) -> Case:
+def case(
+    procedure: ProcedureType,
+    *,
+    status: CaseStatus = CaseStatus.ANALYZED,
+    language: OutputLanguage = OutputLanguage.SPANISH,
+) -> Case:
     return Case(
         id=CASE_ID,
         reference="EC-VALIDATION",
         procedure_type=procedure,
-        output_language=OutputLanguage.SPANISH,
+        output_language=language,
         status=status,
         created_at=NOW,
         updated_at=NOW,
@@ -125,8 +130,8 @@ def test_self_employed_fixture_calculates_missing_start_date() -> None:
     assert result.has_blocking_findings is True
 
 
-def test_employee_fixture_detects_independent_date_mismatch() -> None:
-    subject = case(ProcedureType.EMPLOYEE_HIRING)
+def test_galician_employee_date_mismatch_is_deterministic_not_model_reported() -> None:
+    subject = case(ProcedureType.EMPLOYEE_HIRING, language=OutputLanguage.GALICIAN)
     result = DeterministicIntakeValidator().validate(
         subject,
         analysis(
@@ -136,6 +141,7 @@ def test_employee_fixture_detects_independent_date_mismatch() -> None:
                 fact("requested_start_date", "2026-09-01"),
                 fact("contract_start_date", "2026-09-15"),
             ),
+            language=OutputLanguage.GALICIAN,
         ),
         (message(),),
         (document("employment_contract"),),
@@ -144,6 +150,7 @@ def test_employee_fixture_detects_independent_date_mismatch() -> None:
 
     assert result.missing_fields == ()
     assert "employment_start_date_mismatch" in finding_codes(result)
+    assert "model_reported_contradiction" not in finding_codes(result)
 
 
 def test_grant_fixture_produces_partial_document_checklist() -> None:
