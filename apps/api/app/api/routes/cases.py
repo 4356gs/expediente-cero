@@ -3,31 +3,40 @@
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from openai import OpenAI
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.schemas import (
     AnalysisAttemptResponse,
+    AuditEventResponse,
     CaseCreateRequest,
     CaseListResponse,
     CaseResponse,
     ErrorEnvelope,
+    FollowUpDraftResponse,
+    FollowUpDraftUpdateRequest,
+    ReviewDecisionRequest,
+    ReviewDecisionResponse,
+    TimelineResponse,
     ValidationAttemptResponse,
 )
 from app.application.analysis import AnalysisConfigurationError, IntakeAnalysisService
+from app.application.follow_up import FollowUpConfigurationError, FollowUpService
 from app.application.intake import IntakeService, NewDocument
 from app.application.validation import IntakeValidationService
 from app.infrastructure.persistence import (
     SqliteAnalysisRepository,
+    SqliteAuditEventRepository,
     SqliteCaseRepository,
     SqliteDocumentMetadataRepository,
+    SqliteFollowUpRepository,
     SqliteSourceMessageRepository,
     SqliteValidationRepository,
     create_session_factory,
     create_sqlite_engine,
 )
-from app.integrations.openai import OpenAIIntakeAnalyzer
+from app.integrations.openai import OpenAIFollowUpDrafter, OpenAIIntakeAnalyzer
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 
@@ -99,6 +108,42 @@ async def validation_service(request: Request) -> IntakeValidationService:
 ValidationServiceDependency = Annotated[IntakeValidationService, Depends(validation_service)]
 
 
+async def follow_up_service(request: Request) -> FollowUpService:
+    factory = _session_factory(request)
+    settings = request.app.state.settings
+
+    def resolve_drafter() -> OpenAIFollowUpDrafter:
+        if settings.openai_api_key is None:
+            raise FollowUpConfigurationError
+        client = OpenAI(
+            api_key=settings.openai_api_key.get_secret_value(),
+            timeout=settings.openai_timeout_seconds,
+            max_retries=0,
+        )
+        return OpenAIFollowUpDrafter(client, model=settings.openai_model)
+
+    cases = SqliteCaseRepository(factory)
+    messages = SqliteSourceMessageRepository(factory)
+    documents = SqliteDocumentMetadataRepository(factory)
+    analyses = SqliteAnalysisRepository(factory)
+    validations = SqliteValidationRepository(factory)
+    follow_ups = SqliteFollowUpRepository(factory)
+    return FollowUpService(
+        cases,
+        messages,
+        documents,
+        analyses,
+        validations,
+        follow_ups,
+        SqliteAuditEventRepository(factory),
+        lease_seconds=settings.follow_up_attempt_lease_seconds,
+        drafter_resolver=resolve_drafter,
+    )
+
+
+FollowUpServiceDependency = Annotated[FollowUpService, Depends(follow_up_service)]
+
+
 @router.post(
     "",
     response_model=CaseResponse,
@@ -151,6 +196,91 @@ async def validate_case(
     case_id: UUID, service: ValidationServiceDependency
 ) -> ValidationAttemptResponse:
     return ValidationAttemptResponse.from_attempt(service.validate(case_id))
+
+
+@router.post(
+    "/{case_id}/follow-up-draft",
+    response_model=FollowUpDraftResponse,
+    responses={
+        **ERROR_RESPONSES,
+        200: {"model": FollowUpDraftResponse, "description": "Existing draft returned."},
+        201: {"model": FollowUpDraftResponse, "description": "Draft created."},
+        500: {"model": ErrorEnvelope},
+        502: {"model": ErrorEnvelope},
+        503: {"model": ErrorEnvelope},
+        504: {"model": ErrorEnvelope},
+    },
+)
+async def generate_follow_up_draft(
+    case_id: UUID, response: Response, service: FollowUpServiceDependency
+) -> FollowUpDraftResponse:
+    result = service.generate(case_id)
+    response.status_code = status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
+    return FollowUpDraftResponse.from_domain(result.draft)
+
+
+@router.get(
+    "/{case_id}/follow-up-draft",
+    response_model=FollowUpDraftResponse,
+    responses=ERROR_RESPONSES,
+)
+async def get_follow_up_draft(
+    case_id: UUID, service: FollowUpServiceDependency
+) -> FollowUpDraftResponse:
+    return FollowUpDraftResponse.from_domain(service.get_draft(case_id))
+
+
+@router.patch(
+    "/{case_id}/follow-up-draft",
+    response_model=FollowUpDraftResponse,
+    responses={**ERROR_RESPONSES, 500: {"model": ErrorEnvelope}},
+)
+async def edit_follow_up_draft(
+    case_id: UUID,
+    payload: FollowUpDraftUpdateRequest,
+    service: FollowUpServiceDependency,
+) -> FollowUpDraftResponse:
+    return FollowUpDraftResponse.from_domain(
+        service.edit_draft(
+            case_id,
+            reviewed_text=payload.reviewed_text,
+            expected_version=payload.expected_version,
+        )
+    )
+
+
+@router.post(
+    "/{case_id}/review-decision",
+    response_model=ReviewDecisionResponse,
+    responses={
+        **ERROR_RESPONSES,
+        200: {"model": ReviewDecisionResponse, "description": "Existing decision returned."},
+        201: {"model": ReviewDecisionResponse, "description": "Decision created."},
+        500: {"model": ErrorEnvelope},
+    },
+)
+async def record_review_decision(
+    case_id: UUID,
+    payload: ReviewDecisionRequest,
+    response: Response,
+    service: FollowUpServiceDependency,
+) -> ReviewDecisionResponse:
+    result = service.decide(
+        case_id,
+        decision=payload.decision,
+        reason=payload.reason,
+        reviewer_label=payload.actor.label,
+    )
+    response.status_code = status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
+    return ReviewDecisionResponse.from_domain(result.decision)
+
+
+@router.get("/{case_id}/timeline", response_model=TimelineResponse, responses=ERROR_RESPONSES)
+async def get_timeline(case_id: UUID, service: FollowUpServiceDependency) -> TimelineResponse:
+    return TimelineResponse(
+        case_id=case_id,
+        events=[AuditEventResponse.from_domain(event) for event in service.timeline(case_id)],
+    )
 
 
 @router.get("/{case_id}", response_model=CaseResponse, responses=ERROR_RESPONSES)

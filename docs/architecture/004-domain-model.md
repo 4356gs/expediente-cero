@@ -40,6 +40,9 @@ schemas, and reviewer interface without coupling them to any framework.
 - `system`
 - `model`
 
+For Block 6 decisions, `user` is the only human actor type. A non-blank actor
+label is required; `system` and `model` cannot approve or reject.
+
 ## Aggregate root: Case
 
 `Case` owns the intake lifecycle and is the only aggregate that may change
@@ -171,10 +174,17 @@ Any active blocking finding prevents approval.
 - `reviewed_text`
 - `prompt_version`
 - `model_run_id`
+- `version`: positive integer used for optimistic concurrency
 - `created_at`
 - `updated_at`
 
-`model_text` remains immutable. Human edits are stored in `reviewed_text`.
+`case_id` is unique. `model_text` remains immutable, and `reviewed_text` is
+initialized to the same value. Human edits change only `reviewed_text` and
+increment `version`. Both texts contain 1 to 4000 characters after their
+applicable validation and outer trimming. For this MVP, `model_text`
+immutability is enforced at the domain, application, repository, and HTTP
+boundaries. Direct administrative database updates are outside scope and no
+SQLite immutability trigger is used.
 
 ### ReviewDecision
 
@@ -182,11 +192,14 @@ Any active blocking finding prevents approval.
 - `case_id`
 - `decision`: `approved` or `rejected`
 - `reason`
+- `actor_type`: fixed to `user`
 - `reviewer_label`
 - `created_at`
 
-Rejection requires a reason. Approval is forbidden while blocking findings
-remain active.
+`case_id` is unique and the record is immutable. The reviewer is a human
+`user` actor with a non-blank label. Rejection requires a non-blank human
+reason. Approval is forbidden while blocking findings remain active. Either
+decision requires a persisted follow-up draft.
 
 ### ModelRun
 
@@ -197,13 +210,25 @@ remain active.
 - `model`
 - `prompt_version`
 - `started_at`
-- `completed_at`
-- `status`: `succeeded`, `failed`, or `refused`
+- `completed_at`: null for `in_progress`, required for every terminal status
+- `status`: `in_progress`, `succeeded`, `failed`, or `refused`
 - `request_id`
 - `sanitized_error_code`
 
 Prompts, API keys, hidden reasoning, and raw sensitive content are not stored in
 this entity.
+
+An `in_progress` run requires `completed_at` to be null. A `succeeded`, `failed`,
+or `refused` run requires a non-null `completed_at`. `in_progress` represents
+and controls an active external attempt; it is not a case state. At most one
+follow-up draft run may be active for a case.
+
+For `follow_up_draft`, the effective setting is
+`EXPEDIENTE_CERO_FOLLOW_UP_ATTEMPT_LEASE_SECONDS=300` and must exceed
+`openai_timeout_seconds`, as validated when constructing `Settings`. The UTC
+lease calculation is `expires_at_utc = started_at_utc + lease_seconds`; SQLite
+timestamps are restored as UTC and the run is expired when
+`now_utc >= expires_at_utc`.
 
 ### AuditEvent
 
@@ -216,6 +241,24 @@ this entity.
 - `sanitized_metadata`
 
 Audit events are append-only.
+
+Block 6 event types are:
+
+- `follow_up_generation_started`
+- `follow_up_draft_created`
+- `follow_up_generation_failed`
+- `follow_up_generation_refused`
+- `follow_up_draft_edited`
+- `review_approved`
+- `review_rejected`
+
+Terminal review also emits the existing `case_status_changed` event in the same
+transaction as its specialized review event.
+
+Their metadata may contain case, draft, decision, and model-run IDs; purpose,
+language, model, prompt version, draft versions, prior and new states, sanitized
+error code, and lease expiry. It never contains `model_text`, `reviewed_text`,
+the complete human reason, prompts, secrets, or hidden reasoning.
 
 ## State transitions
 
@@ -246,6 +289,40 @@ Allowed transitions:
 10. Only the application service may coordinate aggregate state transitions.
 11. An `analyzed` case has a persisted intake analysis but no implied deterministic
     validation result.
+12. Follow-up generation requires `needs_review` and completed deterministic
+    validation; generation does not change case status.
+13. A drafter may use only persisted case, synthetic intake, synthetic document
+    metadata, analysis, checklist, and finding data, including the persisted
+    output language.
+14. A case has at most one follow-up draft and one immutable review decision.
+15. Approval and rejection require a persisted follow-up draft and a human
+    actor; rejection additionally requires a non-blank human reason.
+16. Draft edits require the expected current version. A changed edit and its
+    event are atomic; an identical normalized edit is a no-op. External
+    whitespace is trimmed and the resulting `reviewed_text` must be non-empty.
+17. A decision request is normalized before lookup. `reviewer_label` is
+    externally trimmed, required, and compared case-sensitively; `reason` is
+    externally trimmed. A rejection requires a non-empty normalized reason. An
+    approval normalizes an absent or empty reason to null and forbids a
+    non-empty reason.
+18. Review lookup precedes the case-state precondition. A repeated decision
+    with the same value, normalized reason, and normalized human actor returns
+    the existing record even in a terminal state; a different payload
+    conflicts. Only a new decision requires `needs_review`.
+19. New decision persistence, terminal transition, the specialized review
+    event, and `case_status_changed` are atomic. Both events share the operating
+    timestamp and neither has causal precedence when timestamps match.
+20. Model-run completion and its success, failure, or refusal records are
+    atomic. Persistence or audit failure rolls back the associated operation.
+21. An unexpired `in_progress` follow-up lease blocks a new attempt. Recovery of
+    an expired attempt atomically rechecks status and expiry, marks the old run
+    `failed` with `follow_up_attempt_abandoned`, appends its failure event, and
+    creates the replacement `in_progress` run and start event. Exactly one
+    concurrent request may claim it; the case remains in `needs_review`.
+22. SQLite enforces one active follow-up run per case with a partial unique
+    index. An expired-run conditional update must claim exactly one row; the
+    abandoned run, replacement run, and both events are one transaction, with
+    the index protecting the residual race.
 
 ## Procedure templates
 

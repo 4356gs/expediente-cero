@@ -94,13 +94,86 @@ and a partial grant checklist; blocking findings cannot be overridden.
 
 ### Block 6 — Follow-up drafting and human decisions
 
-- Separate bounded Spanish/Galician follow-up draft call.
-- Immutable model text plus editable reviewed text.
-- Approve/reject use cases; rejection reason and approval blockers enforced.
-- Complete audit timeline.
+- Independent `FollowUpDrafter` application port and fake adapter, separate
+  from `IntakeAnalyzer`.
+- Separate synchronous bounded call after validation while the case remains in
+  `needs_review`; generation reads only persisted case, synthetic intake and
+  document metadata, analysis, checklist, and findings.
+- Persisted `OutputLanguage` as the sole language source; no request override.
+- Responses API adapter with strict Structured Outputs, `store=false`, the
+  existing configurable model, prompt version `follow-up-draft-v1`, and a
+  `1200` output-token maximum. Generated and reviewed text are limited to
+  1..4000 characters after validation or outer trim; no
+  agents, tools, function calling, web search, or legislative retrieval.
+- `ModelRun.in_progress` plus atomic generation start, completion, failure, and
+  refusal boundaries. Failure and refusal store no draft and permit a new run.
+- Configurable follow-up-attempt lease through
+  `EXPEDIENTE_CERO_FOLLOW_UP_ATTEMPT_LEASE_SECONDS=300`, without an alias.
+  `Settings` construction rejects a lease not greater than
+  `openai_timeout_seconds` and prevents startup. Runtime service-resolution
+  configuration failures retain `follow_up_configuration_error` when a new
+  generation resolves the provider after provider-free checks.
+- UTC lease calculation with SQLite timestamps restored to UTC and the exact
+  boundary `now_utc >= started_at_utc + lease_seconds`. An unexpired attempt
+  returns a conflict; an expired attempt is atomically failed with
+  `follow_up_attempt_abandoned`, audited, and replaced while the case remains
+  in `needs_review`.
+- SQLite partial unique index for one active follow-up run per case, conditional
+  expired-run claim requiring one affected row, atomic replacement and events,
+  and unique-constraint protection for the residual race.
+- Unique per-case `FollowUpDraft`, immutable `model_text`, initially equal and
+  editable `reviewed_text`, and optimistic `version` updates. Immutability is
+  enforced by domain, application, repository, and HTTP contracts, without a
+  SQLite trigger.
+- Unique immutable `ReviewDecision`; only a labeled human can approve or
+  reject, rejection requires a non-blank reason, and deterministic blocking
+  findings prevent approval.
+- Decision lookup before state validation: a semantically identical retry
+  returns the existing decision from a terminal case, a different retry
+  conflicts, and `needs_review` is required only when no decision exists.
+- External trimming and validation for reviewer label, reason, and reviewed
+  text before idempotency. Approval forbids a non-empty reason with
+  `422 request_validation_error`; rejection requires one with
+  `422 rejection_reason_required`.
+- Atomic terminal decision, transition, specialized review event, and
+  `case_status_changed`; both events share a timestamp, have no causal order at
+  equal timestamps, and are displayed stably by `recorded_at` and ID.
+- Only `needs_review -> approved` and `needs_review -> rejected` terminal
+  transitions; no drafting state.
+- Typed generate, retrieve, edit, decision, and stable timeline endpoints
+  defined in the system architecture, including explicit `200` idempotent and
+  `201` creation responses for both POST operations.
+- Generation checks case existence, existing draft, persisted prerequisites,
+  and an active attempt before resolving OpenAI, preserving canonical error
+  precedence when provider configuration is unavailable.
+- Idempotent successful drafting and identical decisions, edit no-op behavior,
+  concurrency conflicts, unique constraints, and transactional audit events.
+- Sanitized events for generation start, draft creation, failure, refusal,
+  edit, approval, and rejection.
 
-Exit gate: both languages are demonstrated; only a human action can produce a
-terminal state.
+Planned verification covers all three procedures in both languages, the strict
+Structured Outputs contract and `store=false`, exclusive use of persisted
+inputs, immutable model text, edit versioning, idempotency and concurrent
+conflicts, refusal/timeouts/provider errors, mandatory rejection reasons,
+approval blockers, exclusively human decisions, rollback on persistence or
+audit failure, and a complete stable timeline. Lease-specific cases cover an
+active unexpired attempt, expired-attempt detection, recovery with a new
+`ModelRun`, concurrent competition to claim an expired attempt, and atomic
+rollback of the recovery transaction. Additional cases cover the exact expiry
+boundary, startup rejection when lease is less than or equal to provider
+timeout, `ModelRun` completion timestamp invariants, normalization before edit
+and decision idempotency, approval with a non-empty reason returning the
+existing `422 request_validation_error` envelope, both terminal events with a
+shared timestamp, stable non-causal timeline ordering, conflict mappings, and
+the allowed and forbidden audit metadata fields.
+Migration verification includes populated `0003 -> 0004 -> 0003` preservation,
+version backfill, ORM/Alembic invariant parity, checks, and the partial index.
+Recovery rollback verification fails between abandoned-attempt handling and
+replacement start and proves that no partial run or event remains.
+
+Exit gate: the three procedures work in Spanish and Galician through the API;
+retries and concurrency preserve one draft and one decision; failure paths roll
+back consistently; and only a human action can produce a terminal state.
 
 ### Block 7 — Reviewer interface
 

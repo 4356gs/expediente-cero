@@ -196,11 +196,16 @@ class FollowUpDraft:
     model_run_id: UUID
     created_at: datetime
     updated_at: datetime
+    version: int = 1
 
     def __post_init__(self) -> None:
         _require_text(self.model_text, "model_text")
         _require_text(self.reviewed_text, "reviewed_text")
+        if len(self.model_text) > 4_000 or len(self.reviewed_text) > 4_000:
+            raise DomainInvariantError("follow-up draft text cannot exceed 4000 characters")
         _require_text(self.prompt_version, "prompt_version")
+        if self.version < 1:
+            raise DomainInvariantError("version must be positive")
         _require_utc(self.created_at, "created_at")
         _require_utc(self.updated_at, "updated_at")
         if self.updated_at < self.created_at:
@@ -219,12 +224,17 @@ class ReviewDecision:
     reason: str | None = None
 
     def __post_init__(self) -> None:
-        _require_text(self.reviewer_label, "reviewer_label")
+        reviewer_label = self.reviewer_label.strip()
+        _require_text(reviewer_label, "reviewer_label")
+        object.__setattr__(self, "reviewer_label", reviewer_label)
+        reason = self.reason.strip() if self.reason is not None else None
+        reason = reason or None
+        object.__setattr__(self, "reason", reason)
         _require_utc(self.created_at, "created_at")
-        if self.decision is ReviewDecisionType.REJECTED and not (
-            self.reason and self.reason.strip()
-        ):
+        if self.decision is ReviewDecisionType.REJECTED and reason is None:
             raise DomainInvariantError("rejection requires a human-provided reason")
+        if self.decision is ReviewDecisionType.APPROVED and reason is not None:
+            raise DomainInvariantError("approval cannot include a reason")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -248,6 +258,10 @@ class ModelRun:
         _require_text(self.model, "model")
         _require_text(self.prompt_version, "prompt_version")
         _require_utc(self.started_at, "started_at")
+        if self.status is ModelRunStatus.IN_PROGRESS and self.completed_at is not None:
+            raise DomainInvariantError("in-progress model runs cannot be completed")
+        if self.status is not ModelRunStatus.IN_PROGRESS and self.completed_at is None:
+            raise DomainInvariantError("terminal model runs require completed_at")
         if self.completed_at is not None:
             _require_utc(self.completed_at, "completed_at")
             if self.completed_at < self.started_at:

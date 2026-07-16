@@ -11,8 +11,10 @@ from app.domain import (
     CaseStatus,
     ChecklistResult,
     DocumentMetadata,
+    FollowUpDraft,
     IntakeAnalysis,
     ModelRun,
+    ReviewDecision,
     SourceMessage,
     TransitionOutcome,
     ValidationFinding,
@@ -21,6 +23,34 @@ from app.domain import (
 
 class CaseReferenceConflictError(RuntimeError):
     """A new case uses a reference that is already persisted."""
+
+
+class FollowUpCaseNotFoundError(LookupError): ...
+
+
+class FollowUpDraftExistsError(RuntimeError):
+    def __init__(self, draft: FollowUpDraft) -> None:
+        self.draft = draft
+
+
+class FollowUpDraftMissingError(LookupError): ...
+
+
+class FollowUpActiveAttemptError(RuntimeError): ...
+
+
+class FollowUpStateChangedError(RuntimeError): ...
+
+
+class FollowUpVersionChangedError(RuntimeError): ...
+
+
+class FollowUpDecisionExistsError(RuntimeError):
+    def __init__(self, decision: ReviewDecision) -> None:
+        self.decision = decision
+
+
+class FollowUpApprovalBlockedError(RuntimeError): ...
 
 
 class CaseRepository(Protocol):
@@ -111,3 +141,42 @@ class ValidationRepository(Protocol):
         findings: tuple[ValidationFinding, ...],
     ) -> Case:
         """Store results, review-ready state, timestamp, version, and audit atomically."""
+
+    def get_checklist(self, case_id: UUID) -> tuple[ChecklistResult, ...]: ...
+
+    def get_findings(self, case_id: UUID) -> tuple[ValidationFinding, ...]: ...
+
+
+class FollowUpRepository(Protocol):
+    """Own Block 6 transactions and concurrency controls."""
+
+    def get_draft(self, case_id: UUID) -> FollowUpDraft | None: ...
+
+    def generation_is_active(self, case_id: UUID, *, now: datetime, lease_seconds: int) -> bool: ...
+
+    def begin_generation(
+        self, case_id: UUID, model_run: ModelRun, *, now: datetime, lease_seconds: int
+    ) -> None: ...
+
+    def complete_generation(
+        self, model_run: ModelRun, draft: FollowUpDraft | None, *, refused: bool = False
+    ) -> FollowUpDraft | None: ...
+
+    def edit_draft(
+        self,
+        case_id: UUID,
+        *,
+        reviewed_text: str,
+        expected_version: int,
+        edited_at: datetime,
+    ) -> FollowUpDraft: ...
+
+    def get_decision(self, case_id: UUID) -> ReviewDecision | None: ...
+
+    def decide(
+        self,
+        case_id: UUID,
+        *,
+        decision: ReviewDecision,
+        expected_updated_at: datetime,
+    ) -> Case: ...

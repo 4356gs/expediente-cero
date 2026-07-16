@@ -13,6 +13,23 @@ from app.application.analysis import (
     AnalysisConfigurationError,
     AnalysisStateConflictError,
 )
+from app.application.follow_up import (
+    ApprovalBlockedByFindings,
+    ApprovalReasonNotAllowed,
+    FollowUpAttemptFailed,
+    FollowUpCaseNotFound,
+    FollowUpConfigurationError,
+    FollowUpDraftNotFound,
+    FollowUpDraftRequired,
+    FollowUpGenerationInProgress,
+    FollowUpPersistenceError,
+    FollowUpStateConflict,
+    FollowUpVersionConflict,
+    InvalidReviewedText,
+    RejectionReasonRequired,
+    ReviewDecisionConflict,
+    ReviewPersistenceError,
+)
 from app.application.intake import IntakeCaseNotFoundError
 from app.application.ports.repositories import CaseReferenceConflictError
 from app.application.validation import (
@@ -112,6 +129,72 @@ async def validation_persistence_handler(_request: Request, error: Exception) ->
     )
 
 
+async def follow_up_error_handler(_request: Request, error: Exception) -> JSONResponse:
+    mapping: dict[type[Exception], tuple[int, str, str]] = {
+        FollowUpDraftNotFound: (404, "follow_up_draft_not_found", "The draft does not exist."),
+        FollowUpStateConflict: (409, "follow_up_state_conflict", "The case state conflicts."),
+        FollowUpGenerationInProgress: (
+            409,
+            "follow_up_generation_in_progress",
+            "A follow-up generation attempt is active.",
+        ),
+        FollowUpVersionConflict: (409, "follow_up_version_conflict", "The draft is stale."),
+        ReviewDecisionConflict: (
+            409,
+            "review_decision_conflict",
+            "A different review decision already exists.",
+        ),
+        ApprovalBlockedByFindings: (
+            409,
+            "approval_blocked_by_findings",
+            "Blocking findings prevent approval.",
+        ),
+        FollowUpDraftRequired: (
+            409,
+            "follow_up_draft_required",
+            "A follow-up draft is required.",
+        ),
+        InvalidReviewedText: (422, "invalid_reviewed_text", "Reviewed text is invalid."),
+        RejectionReasonRequired: (
+            422,
+            "rejection_reason_required",
+            "A rejection reason is required.",
+        ),
+        ApprovalReasonNotAllowed: (
+            422,
+            "request_validation_error",
+            "The request payload or parameters are invalid.",
+        ),
+        FollowUpConfigurationError: (
+            503,
+            "follow_up_configuration_error",
+            "The follow-up provider is not configured.",
+        ),
+        FollowUpPersistenceError: (
+            500,
+            "follow_up_persistence_error",
+            "The follow-up operation could not be persisted.",
+        ),
+        ReviewPersistenceError: (
+            500,
+            "review_persistence_error",
+            "The review decision could not be persisted.",
+        ),
+    }
+    status_code, code, message = mapping[type(error)]
+    return _response(status_code, code=code, message=message)
+
+
+async def follow_up_attempt_handler(_request: Request, error: Exception) -> JSONResponse:
+    failure = cast(FollowUpAttemptFailed, error)
+    status_code = {
+        "follow_up_timeout": 504,
+        "follow_up_refused": 502,
+        "follow_up_provider_error": 502,
+    }[failure.code]
+    return _response(status_code, code=failure.code, message="Follow-up generation failed.")
+
+
 def register_error_handlers(application: FastAPI) -> None:
     """Install the API's consistent typed error envelope."""
     application.add_exception_handler(RequestValidationError, request_validation_error_handler)
@@ -127,3 +210,21 @@ def register_error_handlers(application: FastAPI) -> None:
     application.add_exception_handler(ValidationPersistenceError, validation_persistence_handler)
     application.add_exception_handler(DomainError, domain_error_handler)
     application.add_exception_handler(CaseReferenceConflictError, persistence_conflict_handler)
+    application.add_exception_handler(FollowUpCaseNotFound, case_not_found_error_handler)
+    application.add_exception_handler(FollowUpAttemptFailed, follow_up_attempt_handler)
+    for error_type in (
+        FollowUpDraftNotFound,
+        FollowUpStateConflict,
+        FollowUpGenerationInProgress,
+        FollowUpVersionConflict,
+        ReviewDecisionConflict,
+        ApprovalBlockedByFindings,
+        FollowUpDraftRequired,
+        InvalidReviewedText,
+        RejectionReasonRequired,
+        ApprovalReasonNotAllowed,
+        FollowUpConfigurationError,
+        FollowUpPersistenceError,
+        ReviewPersistenceError,
+    ):
+        application.add_exception_handler(error_type, follow_up_error_handler)
