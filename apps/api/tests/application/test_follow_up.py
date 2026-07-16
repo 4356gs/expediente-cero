@@ -8,7 +8,9 @@ from uuid import uuid4
 import pytest
 from app.application.follow_up import (
     ApprovalBlockedByFindings,
+    ApprovalReasonNotAllowed,
     FollowUpCaseNotFound,
+    FollowUpConfigurationError,
     FollowUpDraftNotFound,
     FollowUpDraftRequired,
     FollowUpGenerationInProgress,
@@ -20,15 +22,19 @@ from app.application.follow_up import (
     ReviewPersistenceError,
 )
 from app.application.ports import (
+    DrafterErrorCode,
     FakeFollowUpDrafter,
     FollowUpActiveAttemptError,
     FollowUpApprovalBlockedError,
     FollowUpCaseNotFoundError,
+    FollowUpDecisionExistsError,
+    FollowUpDrafterError,
+    FollowUpDraftExistsError,
     FollowUpDraftMissingError,
     FollowUpStateChangedError,
     FollowUpVersionChangedError,
 )
-from app.domain import CaseStatus, ReviewDecisionType
+from app.domain import CaseStatus, ReviewDecision, ReviewDecisionType
 from app.infrastructure.persistence.fixtures import FIXTURE_TIME, SYNTHETIC_CASE_FIXTURES
 
 
@@ -108,6 +114,76 @@ def test_generation_requires_case_analysis_and_atomic_completion() -> None:
         service.generate(SYNTHETIC_CASE_FIXTURES[0].case.id)
 
 
+def test_generation_returns_draft_created_by_a_concurrent_winner() -> None:
+    service, mocks = harness()
+    concurrent_draft = Mock()
+    mocks["follow_ups"].begin_generation.side_effect = FollowUpDraftExistsError(concurrent_draft)
+
+    result = service.generate(SYNTHETIC_CASE_FIXTURES[0].case.id)
+
+    assert result.draft is concurrent_draft
+    assert result.created is False
+
+
+def test_generation_failure_persistence_error_is_not_hidden() -> None:
+    _service, mocks = harness()
+
+    drafter = Mock()
+    drafter.model = "fake-follow-up"
+    drafter.prompt_version = "follow-up-draft-v1"
+    drafter.draft.side_effect = FollowUpDrafterError(DrafterErrorCode.TIMEOUT)
+
+    service = FollowUpService(
+        mocks["cases"],
+        mocks["messages"],
+        mocks["documents"],
+        mocks["analyses"],
+        mocks["validations"],
+        mocks["follow_ups"],
+        mocks["audit"],
+        drafter,
+        lease_seconds=300,
+        clock=lambda: FIXTURE_TIME + timedelta(minutes=3),
+    )
+    mocks["follow_ups"].complete_generation.side_effect = RuntimeError("database unavailable")
+
+    with pytest.raises(FollowUpPersistenceError):
+        service.generate(SYNTHETIC_CASE_FIXTURES[0].case.id)
+
+
+@pytest.mark.parametrize(
+    ("resolver", "expected_cause"),
+    [
+        (None, None),
+        (Mock(side_effect=RuntimeError("dependency unavailable")), RuntimeError),
+        (Mock(side_effect=FollowUpConfigurationError()), FollowUpConfigurationError),
+    ],
+)
+def test_late_drafter_resolution_maps_configuration_failures(
+    resolver: Mock | None, expected_cause: type[Exception] | None
+) -> None:
+    _service, mocks = harness()
+    service = FollowUpService(
+        mocks["cases"],
+        mocks["messages"],
+        mocks["documents"],
+        mocks["analyses"],
+        mocks["validations"],
+        mocks["follow_ups"],
+        mocks["audit"],
+        lease_seconds=300,
+        drafter_resolver=resolver,
+        clock=lambda: FIXTURE_TIME + timedelta(minutes=3),
+    )
+
+    with pytest.raises(FollowUpConfigurationError) as captured:
+        service.generate(SYNTHETIC_CASE_FIXTURES[0].case.id)
+    if expected_cause is None or expected_cause is FollowUpConfigurationError:
+        assert captured.value.__cause__ is None
+    else:
+        assert isinstance(captured.value.__cause__, expected_cause)
+
+
 @pytest.mark.parametrize(
     ("failure", "expected"),
     [
@@ -152,3 +228,59 @@ def test_decision_errors_are_mapped(failure: Exception, expected: type[Exception
             reason="reason",
             reviewer_label="Ana",
         )
+
+
+def test_decision_validates_actor_case_and_state_before_persistence() -> None:
+    service, mocks = harness()
+    with pytest.raises(ApprovalReasonNotAllowed, match="reviewer label is required"):
+        service.decide(
+            uuid4(),
+            decision=ReviewDecisionType.APPROVED,
+            reason=None,
+            reviewer_label="   ",
+        )
+
+    mocks["cases"].get.return_value = None
+    with pytest.raises(FollowUpCaseNotFound):
+        service.decide(
+            uuid4(),
+            decision=ReviewDecisionType.REJECTED,
+            reason="reason",
+            reviewer_label="Ana",
+        )
+
+    mocks["cases"].get.return_value = replace(
+        SYNTHETIC_CASE_FIXTURES[0].case, status=CaseStatus.DRAFT
+    )
+    with pytest.raises(FollowUpStateConflict):
+        service.decide(
+            uuid4(),
+            decision=ReviewDecisionType.REJECTED,
+            reason="reason",
+            reviewer_label="Ana",
+        )
+
+
+def test_decision_unique_race_reuses_semantically_identical_record() -> None:
+    service, mocks = harness()
+    case_id = SYNTHETIC_CASE_FIXTURES[0].case.id
+    existing = ReviewDecision(
+        id=uuid4(),
+        case_id=case_id,
+        decision=ReviewDecisionType.REJECTED,
+        reason="reason",
+        reviewer_label="Ana",
+        created_at=FIXTURE_TIME + timedelta(minutes=3),
+    )
+    mocks["follow_ups"].get_draft.return_value = Mock()
+    mocks["follow_ups"].decide.side_effect = FollowUpDecisionExistsError(existing)
+
+    result = service.decide(
+        case_id,
+        decision=ReviewDecisionType.REJECTED,
+        reason="reason",
+        reviewer_label="Ana",
+    )
+
+    assert result.decision == existing
+    assert result.created is False

@@ -18,7 +18,7 @@ from app.infrastructure.persistence.fixtures import SYNTHETIC_CASE_FIXTURES
 from app.integrations.openai.follow_up_drafter import OpenAIFollowUpDrafter
 from app.integrations.openai.follow_up_prompt import FOLLOW_UP_DRAFT_PROMPT_VERSION
 from app.integrations.openai.follow_up_schemas import FollowUpDraftOutput
-from openai import APIConnectionError, APITimeoutError
+from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
 
 
 def context() -> tuple[object, ...]:
@@ -94,6 +94,30 @@ def test_follow_up_refusal_and_empty_output_are_typed() -> None:
         (
             APIConnectionError(
                 request=httpx.Request("POST", "https://api.openai.com/v1/responses")
+            ),
+            DrafterErrorCode.PROVIDER,
+        ),
+        (
+            APIStatusError(
+                "provider status failure",
+                response=httpx.Response(
+                    500,
+                    request=httpx.Request("POST", "https://api.openai.com/v1/responses"),
+                    headers={"x-request-id": "req-status"},
+                ),
+                body={"error": "sanitized"},
+            ),
+            DrafterErrorCode.PROVIDER,
+        ),
+        (
+            RateLimitError(
+                "rate limited",
+                response=httpx.Response(
+                    429,
+                    request=httpx.Request("POST", "https://api.openai.com/v1/responses"),
+                    headers={"x-request-id": "req-rate"},
+                ),
+                body={"error": "sanitized"},
             ),
             DrafterErrorCode.PROVIDER,
         ),

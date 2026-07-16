@@ -21,7 +21,10 @@ from app.application.ports import (
     DraftingRefusal,
     DraftingSuccess,
     FakeFollowUpDrafter,
+    FollowUpCaseNotFoundError,
     FollowUpDrafterError,
+    FollowUpDraftExistsError,
+    FollowUpStateChangedError,
 )
 from app.core.config import Settings
 from app.domain import (
@@ -480,6 +483,43 @@ def test_only_one_concurrent_request_reclaims_expired_attempt(
             loser.result(timeout=5)
         release.set()
         assert winner.result(timeout=5).created is True
+
+
+def test_repository_rechecks_generation_and_edit_preconditions(
+    session_factory: sessionmaker[Session],
+) -> None:
+    repo = SqliteFollowUpRepository(session_factory)
+    now = FIXTURE_TIME + timedelta(hours=7)
+
+    def run(case_id: UUID) -> ModelRun:
+        return ModelRun(
+            id=uuid4(),
+            case_id=case_id,
+            purpose=ModelRunPurpose.FOLLOW_UP_DRAFT,
+            provider="openai",
+            model="gpt-5.6",
+            prompt_version="follow-up-draft-v1",
+            started_at=now,
+            status=ModelRunStatus.IN_PROGRESS,
+        )
+
+    missing_id = uuid4()
+    with pytest.raises(FollowUpCaseNotFoundError):
+        repo.begin_generation(missing_id, run(missing_id), now=now, lease_seconds=300)
+    with pytest.raises(FollowUpCaseNotFoundError):
+        repo.edit_draft(missing_id, reviewed_text="edit", expected_version=1, edited_at=now)
+
+    wrong_state_id = persist_analyzed_case(session_factory, 0)
+    with pytest.raises(FollowUpStateChangedError):
+        repo.begin_generation(wrong_state_id, run(wrong_state_id), now=now, lease_seconds=300)
+    with pytest.raises(FollowUpStateChangedError):
+        repo.edit_draft(wrong_state_id, reviewed_text="edit", expected_version=1, edited_at=now)
+
+    drafted_id = prepared_case(session_factory, 1)
+    service(session_factory, clock=lambda: now).generate(drafted_id)
+    with pytest.raises(FollowUpDraftExistsError) as captured:
+        repo.begin_generation(drafted_id, run(drafted_id), now=now, lease_seconds=300)
+    assert captured.value.draft.case_id == drafted_id
 
 
 def test_generation_start_rolls_back_when_audit_build_fails(

@@ -38,6 +38,8 @@ branch = true
 source = ["app"]
 
 [tool.coverage.report]
+precision = 2
+fail_under = 95
 exclude_also = [
   "class .*\\bProtocol\\):",
   "if TYPE_CHECKING:",
