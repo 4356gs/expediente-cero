@@ -1,0 +1,9 @@
+{
+  "name": "expediente-cero",
+  "private": true,
+  "scripts": {
+    "web:dev": "npm --prefix apps/web run dev",
+    "web:check": "npm --prefix apps/web run check",
+    "web:test:e2e": "npm --prefix apps/web run test:e2e"
+  }
+}

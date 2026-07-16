@@ -179,9 +179,18 @@ back consistently; and only a human action can produce a terminal state.
 
 - Next.js interface for case intake, four-way evidence separation, draft edit,
   review decision, and audit timeline.
+- Provider-free read contracts for persisted analysis, validation, and review
+  decision so an existing workspace can be reconstructed after reload.
+- Typed same-origin API proxy, explicit loading/empty/error/refusal/conflict
+  states, responsive accessibility, and component/integration/E2E coverage.
 - No direct browser-to-OpenAI traffic.
 
-Exit gate: the same interface completes all three synthetic scenarios.
+The detailed screens, contracts, behavior, verification matrix, and acceptance
+criteria are canonical in `006-block7-reviewer-interface.md`.
+
+Exit gate: the same interface completes and reopens all three synthetic
+scenarios, represents both languages, preserves all four evidence boundaries,
+and passes API plus web quality gates without a live model call.
 
 ### Block 8 — Demo hardening and submission
 
