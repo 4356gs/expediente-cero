@@ -1,14 +1,24 @@
 """SQLite implementations of the application persistence ports."""
 
 from dataclasses import replace
-from datetime import UTC, datetime
-from uuid import UUID
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 
-from app.application.ports.repositories import CaseReferenceConflictError
+from app.application.ports.repositories import (
+    CaseReferenceConflictError,
+    FollowUpActiveAttemptError,
+    FollowUpApprovalBlockedError,
+    FollowUpCaseNotFoundError,
+    FollowUpDecisionExistsError,
+    FollowUpDraftExistsError,
+    FollowUpDraftMissingError,
+    FollowUpStateChangedError,
+    FollowUpVersionChangedError,
+)
 from app.domain import (
     ActorType,
     AuditEvent,
@@ -16,14 +26,18 @@ from app.domain import (
     Case,
     CaseStatus,
     ChecklistResult,
+    ChecklistStatus,
     Contradiction,
     DocumentMetadata,
     ExtractedFact,
     FactStatus,
     FindingSeverity,
+    FollowUpDraft,
     IntakeAnalysis,
     InvalidTransitionError,
     ModelRun,
+    ModelRunPurpose,
+    ModelRunStatus,
     OutputLanguage,
     ProcedureType,
     ReviewDecision,
@@ -39,6 +53,7 @@ from app.infrastructure.persistence.models import (
     CaseModel,
     ChecklistResultModel,
     DocumentMetadataModel,
+    FollowUpDraftModel,
     IntakeAnalysisModel,
     ModelRunModel,
     ReviewDecisionModel,
@@ -178,6 +193,36 @@ def _model_run_to_model(run: ModelRun) -> ModelRunModel:
         status=run.status.value,
         request_id=run.request_id,
         sanitized_error_code=run.sanitized_error_code,
+    )
+
+
+def _draft_to_domain(row: FollowUpDraftModel) -> FollowUpDraft:
+    return FollowUpDraft(
+        id=row.id,
+        case_id=row.case_id,
+        language=OutputLanguage(row.language),
+        model_text=row.model_text,
+        reviewed_text=row.reviewed_text,
+        prompt_version=row.prompt_version,
+        model_run_id=row.model_run_id,
+        version=row.version,
+        created_at=_utc(row.created_at),
+        updated_at=_utc(row.updated_at),
+    )
+
+
+def _draft_to_model(draft: FollowUpDraft) -> FollowUpDraftModel:
+    return FollowUpDraftModel(
+        id=draft.id,
+        case_id=draft.case_id,
+        language=draft.language.value,
+        model_text=draft.model_text,
+        reviewed_text=draft.reviewed_text,
+        prompt_version=draft.prompt_version,
+        model_run_id=draft.model_run_id,
+        version=draft.version,
+        created_at=draft.created_at,
+        updated_at=draft.updated_at,
     )
 
 
@@ -559,6 +604,366 @@ class SqliteValidationRepository:
             session.add(_audit_to_model(event))
             session.flush()
             return replace(outcome.case, validation_findings=findings)
+
+    def get_checklist(self, case_id: UUID) -> tuple[ChecklistResult, ...]:
+        with self._session_factory() as session:
+            rows = session.scalars(
+                select(ChecklistResultModel)
+                .where(ChecklistResultModel.case_id == case_id)
+                .order_by(ChecklistResultModel.item_code, ChecklistResultModel.id)
+            ).all()
+            return tuple(
+                ChecklistResult(
+                    id=row.id,
+                    case_id=row.case_id,
+                    item_code=row.item_code,
+                    label=row.label,
+                    required=row.required,
+                    status=ChecklistStatus(row.status),
+                    evidence_reference=row.evidence_reference,
+                )
+                for row in rows
+            )
+
+    def get_findings(self, case_id: UUID) -> tuple[ValidationFinding, ...]:
+        with self._session_factory() as session:
+            rows = session.scalars(
+                select(ValidationFindingModel)
+                .where(ValidationFindingModel.case_id == case_id)
+                .order_by(ValidationFindingModel.created_at, ValidationFindingModel.id)
+            ).all()
+            return tuple(_finding_to_domain(row) for row in rows)
+
+
+class SqliteFollowUpRepository:
+    """Atomic SQLite adapter for follow-up drafting and review."""
+
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
+
+    def get_draft(self, case_id: UUID) -> FollowUpDraft | None:
+        with self._session_factory() as session:
+            row = session.scalar(
+                select(FollowUpDraftModel).where(FollowUpDraftModel.case_id == case_id)
+            )
+            return _draft_to_domain(row) if row else None
+
+    def generation_is_active(self, case_id: UUID, *, now: datetime, lease_seconds: int) -> bool:
+        with self._session_factory() as session:
+            active = session.scalar(
+                select(ModelRunModel).where(
+                    ModelRunModel.case_id == case_id,
+                    ModelRunModel.purpose == ModelRunPurpose.FOLLOW_UP_DRAFT.value,
+                    ModelRunModel.status == ModelRunStatus.IN_PROGRESS.value,
+                )
+            )
+            if active is None:
+                return False
+            return now < _utc(active.started_at) + timedelta(seconds=lease_seconds)
+
+    def begin_generation(
+        self, case_id: UUID, model_run: ModelRun, *, now: datetime, lease_seconds: int
+    ) -> None:
+        try:
+            with self._session_factory.begin() as session:
+                case_row = _load_case(session, case_id)
+                if case_row is None:
+                    raise FollowUpCaseNotFoundError(str(case_id))
+                draft_row = session.scalar(
+                    select(FollowUpDraftModel).where(FollowUpDraftModel.case_id == case_id)
+                )
+                if draft_row is not None:
+                    raise FollowUpDraftExistsError(_draft_to_domain(draft_row))
+                if case_row.status != CaseStatus.NEEDS_REVIEW.value:
+                    raise FollowUpStateChangedError
+
+                active = session.scalar(
+                    select(ModelRunModel).where(
+                        ModelRunModel.case_id == case_id,
+                        ModelRunModel.purpose == ModelRunPurpose.FOLLOW_UP_DRAFT.value,
+                        ModelRunModel.status == ModelRunStatus.IN_PROGRESS.value,
+                    )
+                )
+                if active is not None:
+                    started_at = _utc(active.started_at)
+                    if now < started_at + timedelta(seconds=lease_seconds):
+                        raise FollowUpActiveAttemptError
+                    claimed = session.connection().execute(
+                        update(ModelRunModel)
+                        .where(
+                            ModelRunModel.id == active.id,
+                            ModelRunModel.status == ModelRunStatus.IN_PROGRESS.value,
+                            ModelRunModel.started_at == active.started_at,
+                        )
+                        .values(
+                            status=ModelRunStatus.FAILED.value,
+                            completed_at=now,
+                            sanitized_error_code="follow_up_attempt_abandoned",
+                        )
+                    )
+                    if claimed.rowcount != 1:
+                        raise FollowUpActiveAttemptError
+                    session.add(
+                        _audit_to_model(
+                            AuditEvent(
+                                id=uuid4(),
+                                case_id=case_id,
+                                event_type=AuditEventType.FOLLOW_UP_GENERATION_FAILED,
+                                actor_type=ActorType.SYSTEM,
+                                actor_label="follow-up-workflow",
+                                recorded_at=now,
+                                sanitized_metadata={
+                                    "model_run_id": str(active.id),
+                                    "purpose": ModelRunPurpose.FOLLOW_UP_DRAFT.value,
+                                    "error_code": "follow_up_attempt_abandoned",
+                                    "lease_expires_at": (
+                                        started_at + timedelta(seconds=lease_seconds)
+                                    ).isoformat(),
+                                },
+                            )
+                        )
+                    )
+
+                session.add(_model_run_to_model(model_run))
+                session.add(
+                    _audit_to_model(
+                        AuditEvent(
+                            id=uuid4(),
+                            case_id=case_id,
+                            event_type=AuditEventType.FOLLOW_UP_GENERATION_STARTED,
+                            actor_type=ActorType.SYSTEM,
+                            actor_label="follow-up-workflow",
+                            recorded_at=now,
+                            sanitized_metadata={
+                                "model_run_id": str(model_run.id),
+                                "purpose": model_run.purpose.value,
+                                "model": model_run.model,
+                                "prompt_version": model_run.prompt_version,
+                                "language": OutputLanguage(case_row.output_language).value,
+                            },
+                        )
+                    )
+                )
+                session.flush()
+        except IntegrityError as error:
+            if "UNIQUE constraint failed: model_runs.case_id" in str(error.orig):
+                raise FollowUpActiveAttemptError from error
+            raise
+
+    def complete_generation(
+        self, model_run: ModelRun, draft: FollowUpDraft | None, *, refused: bool = False
+    ) -> FollowUpDraft | None:
+        with self._session_factory.begin() as session:
+            result = session.connection().execute(
+                update(ModelRunModel)
+                .where(
+                    ModelRunModel.id == model_run.id,
+                    ModelRunModel.status == ModelRunStatus.IN_PROGRESS.value,
+                )
+                .values(
+                    status=model_run.status.value,
+                    completed_at=model_run.completed_at,
+                    request_id=model_run.request_id,
+                    sanitized_error_code=model_run.sanitized_error_code,
+                )
+            )
+            if result.rowcount != 1:
+                raise FollowUpStateChangedError
+            if draft is not None:
+                session.add(_draft_to_model(draft))
+                event_type = AuditEventType.FOLLOW_UP_DRAFT_CREATED
+                metadata = {
+                    "draft_id": str(draft.id),
+                    "model_run_id": str(model_run.id),
+                    "language": draft.language.value,
+                    "prompt_version": draft.prompt_version,
+                    "version": str(draft.version),
+                }
+            else:
+                event_type = (
+                    AuditEventType.FOLLOW_UP_GENERATION_REFUSED
+                    if refused
+                    else AuditEventType.FOLLOW_UP_GENERATION_FAILED
+                )
+                metadata = {
+                    "model_run_id": str(model_run.id),
+                    "error_code": model_run.sanitized_error_code or "provider_error",
+                }
+            completed_at = model_run.completed_at
+            if completed_at is None:
+                raise ValueError("completed model run required")
+            session.add(
+                _audit_to_model(
+                    AuditEvent(
+                        id=uuid4(),
+                        case_id=model_run.case_id,
+                        event_type=event_type,
+                        actor_type=ActorType.SYSTEM,
+                        actor_label="follow-up-workflow",
+                        recorded_at=completed_at,
+                        sanitized_metadata=metadata,
+                    )
+                )
+            )
+            session.flush()
+            return draft
+
+    def edit_draft(
+        self,
+        case_id: UUID,
+        *,
+        reviewed_text: str,
+        expected_version: int,
+        edited_at: datetime,
+    ) -> FollowUpDraft:
+        with self._session_factory.begin() as session:
+            case_row = _load_case(session, case_id)
+            if case_row is None:
+                raise FollowUpCaseNotFoundError(str(case_id))
+            if case_row.status != CaseStatus.NEEDS_REVIEW.value:
+                raise FollowUpStateChangedError
+            row = session.scalar(
+                select(FollowUpDraftModel).where(FollowUpDraftModel.case_id == case_id)
+            )
+            if row is None:
+                raise FollowUpDraftMissingError
+            if row.version != expected_version:
+                raise FollowUpVersionChangedError
+            if row.reviewed_text == reviewed_text:
+                return _draft_to_domain(row)
+            changed = session.connection().execute(
+                update(FollowUpDraftModel)
+                .where(
+                    FollowUpDraftModel.id == row.id,
+                    FollowUpDraftModel.version == expected_version,
+                )
+                .values(
+                    reviewed_text=reviewed_text,
+                    version=expected_version + 1,
+                    updated_at=edited_at,
+                )
+            )
+            if changed.rowcount != 1:
+                raise FollowUpVersionChangedError
+            session.add(
+                _audit_to_model(
+                    AuditEvent(
+                        id=uuid4(),
+                        case_id=case_id,
+                        event_type=AuditEventType.FOLLOW_UP_DRAFT_EDITED,
+                        actor_type=ActorType.USER,
+                        actor_label="human-reviewer",
+                        recorded_at=edited_at,
+                        sanitized_metadata={
+                            "draft_id": str(row.id),
+                            "previous_version": str(expected_version),
+                            "new_version": str(expected_version + 1),
+                        },
+                    )
+                )
+            )
+            session.flush()
+            row.reviewed_text = reviewed_text
+            row.version = expected_version + 1
+            row.updated_at = edited_at
+            return _draft_to_domain(row)
+
+    def get_decision(self, case_id: UUID) -> ReviewDecision | None:
+        with self._session_factory() as session:
+            row = session.scalar(
+                select(ReviewDecisionModel).where(ReviewDecisionModel.case_id == case_id)
+            )
+            return _decision_to_domain(row)
+
+    def decide(
+        self,
+        case_id: UUID,
+        *,
+        decision: ReviewDecision,
+        expected_updated_at: datetime,
+    ) -> Case:
+        try:
+            with self._session_factory.begin() as session:
+                case_row = _load_case(session, case_id)
+                if case_row is None:
+                    raise FollowUpCaseNotFoundError(str(case_id))
+                if case_row.review_decision is not None:
+                    existing = _decision_to_domain(case_row.review_decision)
+                    assert existing is not None
+                    raise FollowUpDecisionExistsError(existing)
+                if case_row.status != CaseStatus.NEEDS_REVIEW.value:
+                    raise FollowUpStateChangedError
+                draft = session.scalar(
+                    select(FollowUpDraftModel).where(FollowUpDraftModel.case_id == case_id)
+                )
+                if draft is None:
+                    raise FollowUpDraftMissingError
+                case = _case_to_domain(case_row)
+                if decision.decision is ReviewDecisionType.APPROVED and case.has_blocking_findings:
+                    raise FollowUpApprovalBlockedError
+                target = (
+                    CaseStatus.APPROVED
+                    if decision.decision is ReviewDecisionType.APPROVED
+                    else CaseStatus.REJECTED
+                )
+                outcome = transition_case(
+                    case,
+                    target,
+                    actor_type=ActorType.USER,
+                    actor_label=decision.reviewer_label,
+                    occurred_at=decision.created_at,
+                    reason=decision.reason,
+                    decision_id=decision.id,
+                )
+                changed = session.connection().execute(
+                    update(CaseModel)
+                    .where(
+                        CaseModel.id == case_id,
+                        CaseModel.status == CaseStatus.NEEDS_REVIEW.value,
+                        CaseModel.updated_at == expected_updated_at,
+                    )
+                    .values(status=target.value, updated_at=decision.created_at)
+                )
+                if changed.rowcount != 1:
+                    raise FollowUpStateChangedError
+                session.add(
+                    ReviewDecisionModel(
+                        id=decision.id,
+                        case_id=case_id,
+                        decision=decision.decision.value,
+                        reason=decision.reason,
+                        reviewer_label=decision.reviewer_label,
+                        created_at=decision.created_at,
+                    )
+                )
+                specialized = AuditEvent(
+                    id=uuid4(),
+                    case_id=case_id,
+                    event_type=(
+                        AuditEventType.REVIEW_APPROVED
+                        if target is CaseStatus.APPROVED
+                        else AuditEventType.REVIEW_REJECTED
+                    ),
+                    actor_type=ActorType.USER,
+                    actor_label=decision.reviewer_label,
+                    recorded_at=decision.created_at,
+                    sanitized_metadata={
+                        "decision_id": str(decision.id),
+                        "draft_id": str(draft.id),
+                        "previous_status": CaseStatus.NEEDS_REVIEW.value,
+                        "new_status": target.value,
+                    },
+                )
+                session.add_all(
+                    [_audit_to_model(specialized), _audit_to_model(outcome.audit_event)]
+                )
+                session.flush()
+                return outcome.case
+        except IntegrityError as error:
+            existing = self.get_decision(case_id)
+            if existing is not None:
+                raise FollowUpDecisionExistsError(existing) from error
+            raise
 
 
 class SqliteSourceMessageRepository:

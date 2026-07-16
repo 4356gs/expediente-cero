@@ -56,6 +56,9 @@ def test_openapi_contract_contains_operational_routes() -> None:
         "/cases",
         "/cases/{case_id}",
         "/cases/{case_id}/analysis",
+        "/cases/{case_id}/follow-up-draft",
+        "/cases/{case_id}/review-decision",
+        "/cases/{case_id}/timeline",
         "/cases/{case_id}/validation",
     }
 
@@ -88,6 +91,14 @@ def test_openapi_registers_unique_operations_and_case_schemas() -> None:
     assert document["paths"]["/cases"]["post"]["responses"]["201"]["content"]["application/json"][
         "schema"
     ]["$ref"].endswith("/CaseResponse")
+    for path, schema in (
+        ("/cases/{case_id}/follow-up-draft", "FollowUpDraftResponse"),
+        ("/cases/{case_id}/review-decision", "ReviewDecisionResponse"),
+    ):
+        for status_code in ("200", "201"):
+            assert document["paths"][path]["post"]["responses"][status_code]["content"][
+                "application/json"
+            ]["schema"]["$ref"].endswith(f"/{schema}")
     for status_code in ("404", "409", "422"):
         assert document["paths"]["/cases/{case_id}"]["get"]["responses"][status_code]["content"][
             "application/json"

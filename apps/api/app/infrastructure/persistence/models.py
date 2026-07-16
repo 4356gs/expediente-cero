@@ -4,7 +4,18 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, String, Text, Uuid
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    Uuid,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -63,6 +74,19 @@ class DocumentMetadataModel(Base):
 
 class ModelRunModel(Base):
     __tablename__ = "model_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "(status = 'in_progress' AND completed_at IS NULL) OR "
+            "(status IN ('succeeded', 'failed', 'refused') AND completed_at IS NOT NULL)",
+            name="ck_model_runs_completion_by_status",
+        ),
+        Index(
+            "uq_model_runs_active_follow_up_case",
+            "case_id",
+            unique=True,
+            sqlite_where=text("purpose = 'follow_up_draft' AND status = 'in_progress'"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     case_id: Mapped[UUID] = mapped_column(
@@ -133,6 +157,7 @@ class ValidationFindingModel(Base):
 
 class FollowUpDraftModel(Base):
     __tablename__ = "follow_up_drafts"
+    __table_args__ = (CheckConstraint("version >= 1", name="ck_follow_up_drafts_version_positive"),)
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     case_id: Mapped[UUID] = mapped_column(
@@ -145,6 +170,7 @@ class FollowUpDraftModel(Base):
     model_run_id: Mapped[UUID] = mapped_column(
         ForeignKey("model_runs.id", ondelete="RESTRICT"), nullable=False
     )
+    version: Mapped[int] = mapped_column(nullable=False, default=1, server_default=text("1"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

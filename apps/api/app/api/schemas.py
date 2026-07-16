@@ -10,13 +10,17 @@ from app.application.analysis import AnalysisAttempt
 from app.application.intake import CaseIntake, CasePage
 from app.application.validation import ValidationAttempt
 from app.domain import (
+    AuditEvent,
     CaseStatus,
     ChecklistStatus,
     FactStatus,
     FindingSeverity,
+    FollowUpDraft,
     ModelRunStatus,
     OutputLanguage,
     ProcedureType,
+    ReviewDecision,
+    ReviewDecisionType,
 )
 
 Reference = Annotated[str, Field(min_length=1, max_length=32)]
@@ -338,3 +342,85 @@ class ErrorDetail(StrictSchema):
 
 class ErrorEnvelope(StrictSchema):
     error: ErrorDetail
+
+
+ReviewedText = Annotated[str, Field(max_length=4_000)]
+ReviewerLabel = Annotated[str, Field(min_length=1, max_length=128)]
+ReviewReason = Annotated[str, Field(max_length=2_000)]
+
+
+class FollowUpDraftUpdateRequest(StrictSchema):
+    reviewed_text: ReviewedText
+    expected_version: Annotated[int, Field(ge=1)]
+
+
+class FollowUpDraftResponse(StrictSchema):
+    id: UUID
+    case_id: UUID
+    language: OutputLanguage
+    model_text: str
+    reviewed_text: str
+    prompt_version: str
+    model_run_id: UUID
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_domain(cls, draft: FollowUpDraft) -> "FollowUpDraftResponse":
+        return cls(**{name: getattr(draft, name) for name in cls.model_fields})
+
+
+class HumanActor(StrictSchema):
+    label: ReviewerLabel
+
+
+class ReviewDecisionRequest(StrictSchema):
+    decision: ReviewDecisionType
+    reason: ReviewReason | None = None
+    actor: HumanActor
+
+
+class ReviewDecisionResponse(StrictSchema):
+    id: UUID
+    case_id: UUID
+    decision: ReviewDecisionType
+    reason: str | None
+    actor: HumanActor
+    created_at: datetime
+
+    @classmethod
+    def from_domain(cls, decision: ReviewDecision) -> "ReviewDecisionResponse":
+        return cls(
+            id=decision.id,
+            case_id=decision.case_id,
+            decision=decision.decision,
+            reason=decision.reason,
+            actor=HumanActor(label=decision.reviewer_label),
+            created_at=decision.created_at,
+        )
+
+
+class AuditEventResponse(StrictSchema):
+    id: UUID
+    event_type: str
+    actor_type: str
+    actor_label: str
+    recorded_at: datetime
+    metadata: dict[str, str]
+
+    @classmethod
+    def from_domain(cls, event: AuditEvent) -> "AuditEventResponse":
+        return cls(
+            id=event.id,
+            event_type=event.event_type.value,
+            actor_type=event.actor_type.value,
+            actor_label=event.actor_label,
+            recorded_at=event.recorded_at,
+            metadata=dict(event.sanitized_metadata),
+        )
+
+
+class TimelineResponse(StrictSchema):
+    case_id: UUID
+    events: list[AuditEventResponse]

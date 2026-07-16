@@ -80,6 +80,7 @@ class ModelRunPurpose(StrEnum):
 class ModelRunStatus(StrEnum):
     """Recorded outcome of a bounded model operation."""
 
+    IN_PROGRESS = "in_progress"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     REFUSED = "refused"
@@ -89,3 +90,10 @@ class AuditEventType(StrEnum):
     """Domain events material to the audit trail."""
 
     CASE_STATUS_CHANGED = "case_status_changed"
+    FOLLOW_UP_GENERATION_STARTED = "follow_up_generation_started"
+    FOLLOW_UP_DRAFT_CREATED = "follow_up_draft_created"
+    FOLLOW_UP_GENERATION_FAILED = "follow_up_generation_failed"
+    FOLLOW_UP_GENERATION_REFUSED = "follow_up_generation_refused"
+    FOLLOW_UP_DRAFT_EDITED = "follow_up_draft_edited"
+    REVIEW_APPROVED = "review_approved"
+    REVIEW_REJECTED = "review_rejected"
