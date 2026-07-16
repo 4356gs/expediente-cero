@@ -60,6 +60,7 @@ def test_openapi_contract_contains_operational_routes() -> None:
         "/cases/{case_id}/review-decision",
         "/cases/{case_id}/timeline",
         "/cases/{case_id}/validation",
+        "/cases/{case_id}/validation-result",
     }
 
 

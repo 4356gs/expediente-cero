@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.application.analysis import AnalysisAttempt
 from app.application.intake import CaseIntake, CasePage
+from app.application.reviewer import PersistedValidation
 from app.application.validation import ValidationAttempt
 from app.domain import (
     AuditEvent,
@@ -16,6 +17,7 @@ from app.domain import (
     FactStatus,
     FindingSeverity,
     FollowUpDraft,
+    IntakeAnalysis,
     ModelRunStatus,
     OutputLanguage,
     ProcedureType,
@@ -202,6 +204,47 @@ class IntakeAnalysisResponse(StrictSchema):
     model_run_id: UUID
     created_at: datetime
 
+    @classmethod
+    def from_domain(cls, analysis: IntakeAnalysis) -> "IntakeAnalysisResponse":
+        return cls(
+            id=analysis.id,
+            case_id=analysis.case_id,
+            procedure_type=analysis.procedure_type,
+            procedure_reason=analysis.procedure_reason,
+            facts=[
+                ExtractedFactResponse(
+                    field=fact.field,
+                    value=fact.value,
+                    source_reference=fact.source_reference,
+                    status=fact.status,
+                )
+                for fact in analysis.facts
+            ],
+            assumptions=list(analysis.assumptions),
+            unresolved_questions=[
+                UnresolvedQuestionResponse(
+                    code=question.code,
+                    question=question.question,
+                    reason=question.reason,
+                    blocking=question.blocking,
+                )
+                for question in analysis.unresolved_questions
+            ],
+            contradictions=[
+                ContradictionResponse(
+                    code=contradiction.code,
+                    description=contradiction.description,
+                    source_references=list(contradiction.source_references),
+                    blocking=contradiction.blocking,
+                )
+                for contradiction in analysis.contradictions
+            ],
+            requested_output_language=analysis.requested_output_language,
+            prompt_version=analysis.prompt_version,
+            model_run_id=analysis.model_run_id,
+            created_at=analysis.created_at,
+        )
+
 
 class AnalysisAttemptResponse(StrictSchema):
     case_status: CaseStatus
@@ -216,44 +259,7 @@ class AnalysisAttemptResponse(StrictSchema):
             raise ValueError("completed analysis attempts require completed_at")
         return cls(
             case_status=attempt.case.status,
-            analysis=IntakeAnalysisResponse(
-                id=analysis.id,
-                case_id=analysis.case_id,
-                procedure_type=analysis.procedure_type,
-                procedure_reason=analysis.procedure_reason,
-                facts=[
-                    ExtractedFactResponse(
-                        field=fact.field,
-                        value=fact.value,
-                        source_reference=fact.source_reference,
-                        status=fact.status,
-                    )
-                    for fact in analysis.facts
-                ],
-                assumptions=list(analysis.assumptions),
-                unresolved_questions=[
-                    UnresolvedQuestionResponse(
-                        code=question.code,
-                        question=question.question,
-                        reason=question.reason,
-                        blocking=question.blocking,
-                    )
-                    for question in analysis.unresolved_questions
-                ],
-                contradictions=[
-                    ContradictionResponse(
-                        code=contradiction.code,
-                        description=contradiction.description,
-                        source_references=list(contradiction.source_references),
-                        blocking=contradiction.blocking,
-                    )
-                    for contradiction in analysis.contradictions
-                ],
-                requested_output_language=analysis.requested_output_language,
-                prompt_version=analysis.prompt_version,
-                model_run_id=analysis.model_run_id,
-                created_at=analysis.created_at,
-            ),
+            analysis=IntakeAnalysisResponse.from_domain(analysis),
             model_run=ModelRunResponse(
                 id=run.id,
                 provider=run.provider,
@@ -324,6 +330,44 @@ class ValidationAttemptResponse(StrictSchema):
                     created_at=item.created_at,
                 )
                 for item in computation.findings
+            ],
+        )
+
+
+class ValidationResultResponse(StrictSchema):
+    template_version: str
+    validation_completed_at: datetime
+    has_blocking_findings: bool
+    checklist_results: list[ChecklistResultResponse]
+    findings: list[ValidationFindingResponse]
+
+    @classmethod
+    def from_persisted(cls, result: PersistedValidation) -> "ValidationResultResponse":
+        return cls(
+            template_version=result.template_version,
+            validation_completed_at=result.completed_at,
+            has_blocking_findings=result.has_blocking_findings,
+            checklist_results=[
+                ChecklistResultResponse(
+                    id=item.id,
+                    item_code=item.item_code,
+                    label=item.label,
+                    required=item.required,
+                    status=item.status,
+                    evidence_reference=item.evidence_reference,
+                )
+                for item in result.checklist_results
+            ],
+            findings=[
+                ValidationFindingResponse(
+                    id=item.id,
+                    code=item.code,
+                    severity=item.severity,
+                    message=item.message,
+                    field_reference=item.field_reference,
+                    created_at=item.created_at,
+                )
+                for item in result.findings
             ],
         )
 

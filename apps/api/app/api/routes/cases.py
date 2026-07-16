@@ -16,14 +16,17 @@ from app.api.schemas import (
     ErrorEnvelope,
     FollowUpDraftResponse,
     FollowUpDraftUpdateRequest,
+    IntakeAnalysisResponse,
     ReviewDecisionRequest,
     ReviewDecisionResponse,
     TimelineResponse,
     ValidationAttemptResponse,
+    ValidationResultResponse,
 )
 from app.application.analysis import AnalysisConfigurationError, IntakeAnalysisService
 from app.application.follow_up import FollowUpConfigurationError, FollowUpService
 from app.application.intake import IntakeService, NewDocument
+from app.application.reviewer import ReviewerReadService
 from app.application.validation import IntakeValidationService
 from app.infrastructure.persistence import (
     SqliteAnalysisRepository,
@@ -108,6 +111,20 @@ async def validation_service(request: Request) -> IntakeValidationService:
 ValidationServiceDependency = Annotated[IntakeValidationService, Depends(validation_service)]
 
 
+async def reviewer_read_service(request: Request) -> ReviewerReadService:
+    """Build provider-free reads for a reloadable reviewer workspace."""
+    factory = _session_factory(request)
+    return ReviewerReadService(
+        SqliteCaseRepository(factory),
+        SqliteAnalysisRepository(factory),
+        SqliteValidationRepository(factory),
+        SqliteFollowUpRepository(factory),
+    )
+
+
+ReviewerReadServiceDependency = Annotated[ReviewerReadService, Depends(reviewer_read_service)]
+
+
 async def follow_up_service(request: Request) -> FollowUpService:
     factory = _session_factory(request)
     settings = request.app.state.settings
@@ -187,6 +204,17 @@ async def analyze_case(
     return AnalysisAttemptResponse.from_attempt(service.analyze(case_id))
 
 
+@router.get(
+    "/{case_id}/analysis",
+    response_model=IntakeAnalysisResponse,
+    responses=ERROR_RESPONSES,
+)
+async def get_analysis(
+    case_id: UUID, service: ReviewerReadServiceDependency
+) -> IntakeAnalysisResponse:
+    return IntakeAnalysisResponse.from_domain(service.get_analysis(case_id))
+
+
 @router.post(
     "/{case_id}/validation",
     response_model=ValidationAttemptResponse,
@@ -196,6 +224,17 @@ async def validate_case(
     case_id: UUID, service: ValidationServiceDependency
 ) -> ValidationAttemptResponse:
     return ValidationAttemptResponse.from_attempt(service.validate(case_id))
+
+
+@router.get(
+    "/{case_id}/validation-result",
+    response_model=ValidationResultResponse,
+    responses=ERROR_RESPONSES,
+)
+async def get_validation_result(
+    case_id: UUID, service: ReviewerReadServiceDependency
+) -> ValidationResultResponse:
+    return ValidationResultResponse.from_persisted(service.get_validation(case_id))
 
 
 @router.post(
@@ -273,6 +312,17 @@ async def record_review_decision(
     )
     response.status_code = status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
     return ReviewDecisionResponse.from_domain(result.decision)
+
+
+@router.get(
+    "/{case_id}/review-decision",
+    response_model=ReviewDecisionResponse,
+    responses=ERROR_RESPONSES,
+)
+async def get_review_decision(
+    case_id: UUID, service: ReviewerReadServiceDependency
+) -> ReviewDecisionResponse:
+    return ReviewDecisionResponse.from_domain(service.get_decision(case_id))
 
 
 @router.get("/{case_id}/timeline", response_model=TimelineResponse, responses=ERROR_RESPONSES)

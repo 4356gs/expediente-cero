@@ -32,6 +32,12 @@ from app.application.follow_up import (
 )
 from app.application.intake import IntakeCaseNotFoundError
 from app.application.ports.repositories import CaseReferenceConflictError
+from app.application.reviewer import (
+    AnalysisResultNotFound,
+    ReviewDecisionNotFound,
+    ReviewerCaseNotFound,
+    ValidationResultNotFound,
+)
 from app.application.validation import (
     ValidationCaseNotFoundError,
     ValidationPersistenceError,
@@ -80,6 +86,22 @@ async def persistence_conflict_handler(_request: Request, error: Exception) -> J
         code="persistence_conflict",
         message="The case conflicts with an existing persisted record.",
     )
+
+
+async def reviewer_artifact_not_found_handler(_request: Request, error: Exception) -> JSONResponse:
+    mapping: dict[type[Exception], tuple[str, str]] = {
+        AnalysisResultNotFound: ("analysis_not_found", "The analysis does not exist."),
+        ValidationResultNotFound: (
+            "validation_result_not_found",
+            "The validation result does not exist.",
+        ),
+        ReviewDecisionNotFound: (
+            "review_decision_not_found",
+            "The review decision does not exist.",
+        ),
+    }
+    code, message = mapping[type(error)]
+    return _response(404, code=code, message=message)
 
 
 async def analysis_failure_handler(_request: Request, error: Exception) -> JSONResponse:
@@ -211,6 +233,13 @@ def register_error_handlers(application: FastAPI) -> None:
     application.add_exception_handler(DomainError, domain_error_handler)
     application.add_exception_handler(CaseReferenceConflictError, persistence_conflict_handler)
     application.add_exception_handler(FollowUpCaseNotFound, case_not_found_error_handler)
+    application.add_exception_handler(ReviewerCaseNotFound, case_not_found_error_handler)
+    for reviewer_error_type in (
+        AnalysisResultNotFound,
+        ValidationResultNotFound,
+        ReviewDecisionNotFound,
+    ):
+        application.add_exception_handler(reviewer_error_type, reviewer_artifact_not_found_handler)
     application.add_exception_handler(FollowUpAttemptFailed, follow_up_attempt_handler)
     for error_type in (
         FollowUpDraftNotFound,
