@@ -43,6 +43,25 @@ it("forwards JSON mutations without exposing another upstream", async () => {
   );
 });
 
+it("normalizes a private-network hostport without exposing it to the browser", async () => {
+  process.env.EXPEDIENTE_CERO_API_BASE_URL = "expediente-cero-api:10000";
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify({ items: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+
+  await GET(new NextRequest("http://localhost/api/backend/cases"), {
+    params: Promise.resolve({ path: ["cases"] }),
+  });
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    new URL("http://expediente-cero-api:10000/cases"),
+    expect.any(Object),
+  );
+});
+
 it("rejects unbounded paths and normalizes an unavailable API", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch");
   const denied = await GET(new NextRequest("http://localhost/api/backend/openai"), {

@@ -1,4 +1,4 @@
-.PHONY: install install-web format lint typecheck test check check-web check-all migrate run-api run-web test-web-e2e
+.PHONY: install install-web format lint typecheck test check check-web check-all migrate run-api run-web test-web-e2e demo-seed demo-reset demo-status rehearse-demo
 
 install:
 	python -m pip install -e ".[dev]"
@@ -7,12 +7,12 @@ install-web:
 	npm --prefix apps/web ci
 
 format:
-	python -m ruff format apps/api
-	python -m ruff check --fix apps/api
+	python -m ruff format apps/api scripts
+	python -m ruff check --fix apps/api scripts
 
 lint:
-	python -m ruff format --check apps/api
-	python -m ruff check apps/api
+	python -m ruff format --check apps/api scripts
+	python -m ruff check apps/api scripts
 
 typecheck:
 	python -m mypy apps/api/app
@@ -38,3 +38,15 @@ run-web:
 
 test-web-e2e:
 	npm --prefix apps/web run test:e2e
+
+demo-seed:
+	python -m app.demo seed
+
+demo-reset:
+	python -m app.demo reset --confirm RESET-DEMO-DATA
+
+demo-status:
+	python -m app.demo status
+
+rehearse-demo:
+	python scripts/rehearse_demo.py

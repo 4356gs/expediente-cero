@@ -47,8 +47,25 @@ make check-web
 make test-web-e2e
 ```
 
+## Demo rehearsal
+
+The canonical Block 8 scope and safety gates are documented in
+`docs/implementation/007-block8-demo-hardening.md`. From an installed checkout,
+the deterministic rehearsal is:
+
+```text
+make rehearse-demo
+```
+
+This runs API and web quality gates, rebuilds and seeds a temporary demo-only
+SQLite database, verifies its three canonical cases, and runs desktop/mobile
+E2E without a live model call. See `docs/demo/008-demo-runbook.md` before a live
+GPT-5.6 walkthrough or Render deployment.
+
 ## Status
 
 Blocks 0–7 implement the typed synthetic intake, structured model analysis,
 deterministic validation, bounded follow-up drafting, mandatory human decision,
-audit history, and the responsive reviewer interface.
+audit history, and the responsive reviewer interface. Block 8 hardening is in
+progress; external demo, video, `/feedback`, and submission evidence remain
+human completion gates.

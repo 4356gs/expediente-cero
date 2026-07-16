@@ -198,6 +198,10 @@ and passes API plus web quality gates without a live model call.
 - Security/privacy review and visible synthetic-data/advice boundaries.
 - Build Week evidence, screenshots, video, deployment, and submission links.
 
+The repository deliverables, safe demo-data lifecycle, Render reference
+deployment, evidence policy, and external human completion gate are canonical
+in `007-block8-demo-hardening.md`.
+
 Exit gate: clean-machine rehearsal succeeds and every submission claim is tied
 to a test, commit, screenshot, session record, or running artifact.
 
