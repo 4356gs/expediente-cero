@@ -12,7 +12,8 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       { status: 404 },
     );
   }
-  const base = process.env.EXPEDIENTE_CERO_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const configuredBase = process.env.EXPEDIENTE_CERO_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const base = /^https?:\/\//.test(configuredBase) ? configuredBase : `http://${configuredBase}`;
   const target = new URL(path.map(encodeURIComponent).join("/"), `${base.replace(/\/$/, "")}/`);
   target.search = request.nextUrl.search;
   const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.text();

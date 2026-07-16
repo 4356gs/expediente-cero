@@ -1,0 +1,49 @@
+services:
+  - type: web
+    runtime: python
+    name: expediente-cero-api
+    region: frankfurt
+    plan: starter
+    buildCommand: pip install .
+    startCommand: python -m alembic -c apps/api/alembic.ini upgrade head && python -m app.demo seed && python -m uvicorn app.main:app --app-dir apps/api --host 0.0.0.0 --port $PORT
+    healthCheckPath: /ready
+    autoDeployTrigger: commit
+    numInstances: 1
+    disk:
+      name: expediente-cero-demo-data
+      mountPath: /var/data/expediente-cero
+      sizeGB: 1
+    envVars:
+      - key: EXPEDIENTE_CERO_ENVIRONMENT
+        value: demo
+      - key: EXPEDIENTE_CERO_LOG_LEVEL
+        value: INFO
+      - key: EXPEDIENTE_CERO_API_DOCS_ENABLED
+        value: "false"
+      - key: EXPEDIENTE_CERO_DATABASE_URL
+        value: sqlite:////var/data/expediente-cero/expediente-cero.db
+      - key: EXPEDIENTE_CERO_OPENAI_MODEL
+        value: gpt-5.6
+      - key: EXPEDIENTE_CERO_OPENAI_TIMEOUT_SECONDS
+        value: "30"
+      - key: EXPEDIENTE_CERO_FOLLOW_UP_ATTEMPT_LEASE_SECONDS
+        value: "300"
+      - key: OPENAI_API_KEY
+        sync: false
+
+  - type: web
+    runtime: node
+    name: expediente-cero-web
+    region: frankfurt
+    plan: starter
+    rootDir: apps/web
+    buildCommand: npm ci && npm run build
+    startCommand: npm start -- --hostname 0.0.0.0 --port $PORT
+    healthCheckPath: /
+    autoDeployTrigger: commit
+    envVars:
+      - key: EXPEDIENTE_CERO_API_BASE_URL
+        fromService:
+          type: web
+          name: expediente-cero-api
+          property: hostport

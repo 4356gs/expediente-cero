@@ -23,6 +23,10 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
           </Link>
           <span className="syntheticFlag">Entorno sintético</span>
         </header>
+        <aside className="safetyBoundary" aria-label="Límites de la demostración">
+          <strong>Demostración con datos ficticios.</strong>
+          <span>La salida requiere revisión humana, no es asesoramiento profesional y no se presenta ante ningún organismo.</span>
+        </aside>
         <main>{children}</main>
         <footer className="siteFooter">
           Preparación de intake · Sin asesoría ni presentación ante organismos

@@ -16,6 +16,9 @@ dependencies = [
   "uvicorn[standard]>=0.35,<1",
 ]
 
+[project.scripts]
+expediente-cero-demo = "app.demo:main"
+
 [project.optional-dependencies]
 dev = [
   "httpx>=0.28,<1",

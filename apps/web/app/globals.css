@@ -31,6 +31,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .brand strong { font-family: Georgia, "Times New Roman", serif; font-size: 1.08rem; }
 .brand small { color: var(--muted); margin-top: 2px; }
 .syntheticFlag { border: 1px solid #8bb39f; background: var(--green-soft); color: var(--green-dark); border-radius: 999px; padding: 6px 11px; font-size: .78rem; font-weight: 750; letter-spacing: .03em; text-transform: uppercase; }
+.safetyBoundary { display: flex; justify-content: center; gap: 8px; padding: 9px 24px; border-bottom: 1px solid #ead7a5; background: #fff8e7; color: #654f1e; font-size: .82rem; text-align: center; }
 .siteFooter { color: var(--muted); border-top: 1px solid var(--line); text-align: center; padding: 26px 4vw 34px; font-size: .84rem; }
 
 .pageShell { width: min(1440px, 92vw); margin: 0 auto; padding: 42px 0 72px; }
@@ -194,6 +195,7 @@ blockquote cite { display: block; color: var(--muted); font-size: .7rem; margin-
 
 @media (max-width: 620px) {
   .siteHeader { padding: 0 18px; }
+  .safetyBoundary { align-items: center; flex-direction: column; gap: 2px; padding-inline: 16px; }
   .brand small { display: none; }
   .siteHeader > .syntheticFlag { font-size: .62rem; padding: 5px 8px; }
   .pageShell { width: min(100% - 28px, 1440px); padding-top: 26px; }
