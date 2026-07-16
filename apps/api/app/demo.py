@@ -53,7 +53,18 @@ def _require_demo(settings: Settings) -> None:
 
 
 def _alembic_config(database_url: str) -> Config:
-    api_root = Path(__file__).resolve().parents[1]
+    installed_api_root = Path(__file__).resolve().parents[1]
+    checkout_api_root = Path.cwd() / "apps" / "api"
+    api_root = next(
+        (
+            candidate
+            for candidate in (installed_api_root, checkout_api_root)
+            if (candidate / "alembic.ini").is_file() and (candidate / "alembic").is_dir()
+        ),
+        None,
+    )
+    if api_root is None:
+        raise DemoSafetyError("cannot locate the Alembic configuration and migrations")
     config = Config(api_root / "alembic.ini")
     config.set_main_option("script_location", str(api_root / "alembic"))
     config.set_main_option("sqlalchemy.url", database_url)

@@ -98,3 +98,23 @@ def test_cli_rejects_an_unsafe_environment(
         demo.main(["seed"])
 
     assert "ENVIRONMENT=demo" in capsys.readouterr().err
+
+
+def test_alembic_config_finds_checkout_for_an_installed_wheel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api_root = tmp_path / "apps" / "api"
+    (api_root / "alembic").mkdir(parents=True)
+    (api_root / "alembic.ini").write_text(
+        "[alembic]\nscript_location = unused\n",
+        encoding="utf-8",
+    )
+    installed_module = tmp_path / ".venv" / "site-packages" / "app" / "demo.py"
+    monkeypatch.setattr(demo, "__file__", str(installed_module))
+    monkeypatch.chdir(tmp_path)
+
+    config = demo._alembic_config("sqlite:///demo.sqlite3")
+
+    assert config.config_file_name == str(api_root / "alembic.ini")
+    assert config.get_main_option("script_location") == str(api_root / "alembic")
+    assert config.get_main_option("sqlalchemy.url") == "sqlite:///demo.sqlite3"
